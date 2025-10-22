@@ -1,0 +1,11 @@
+{
+  "id": "date-tags-plugin",
+  "name": "Date Tags Automation",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Automatically manages created/modified frontmatter and appends daily nested date tags on every modification.",
+  "author": "bobthearsonist",
+  "authorUrl": "https://github.com/bobthearsonist",
+  "fundingUrl": "https://buymeacoffee.com/bobthearsonist",
+  "isDesktopOnly": false
+}
