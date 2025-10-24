@@ -1,11 +1,11 @@
 {
   "name": "date-tags-plugin",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Automatically manages created/modified frontmatter and appends daily nested date tags on every modification for Obsidian notes.",
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "esbuild main.source.js --bundle --external:obsidian --outfile=main.js --format=cjs --platform=node"
+    "build": "esbuild main.source.js --bundle --external:obsidian --outfile=main.js --format=cjs --platform=browser --define:global=window"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +15,7 @@
     "gray-matter": "^4.0.3"
   },
   "devDependencies": {
+    "buffer": "^6.0.3",
     "esbuild": "^0.19.12"
   }
 }

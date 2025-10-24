@@ -1,3 +1,6 @@
+// Buffer polyfill for mobile compatibility
+import './buffer-polyfill.js';
+
 const {
   Plugin,
   PluginSettingTab,
@@ -10,13 +13,14 @@ const matter = require('gray-matter');
 const DEFAULT_SETTINGS = {
   baseTag: 'date',
   scopeFolders: [],
+  excludeFolders: ['Templates'],
   updateFrontmatterModified: true,
   delegateModifiedToLinter: false,
   addTypeIfMissing: true,
   typeValue: 'note',
   debounceMs: 1500,
   preserveCreationTag: true,
-  templaterDetectionDelay: 100,
+  templaterDetectionDelay: 300,
 };
 
 // Utility class for date formatting and tag building
@@ -231,6 +235,18 @@ class FileProcessor {
     if (!file || !(file instanceof TFile) || file.extension !== 'md') {
       return false;
     }
+
+    // Check if file is in an excluded folder
+    if (this.settings.excludeFolders.length > 0) {
+      const isExcluded = this.settings.excludeFolders.some((folder) =>
+        file.path.startsWith(folder.trim())
+      );
+      if (isExcluded) {
+        return false;
+      }
+    }
+
+    // Check if file is in scope folders (if specified)
     if (this.settings.scopeFolders.length === 0) return true;
     return this.settings.scopeFolders.some((folder) =>
       file.path.startsWith(folder.trim())
@@ -250,7 +266,20 @@ class FileProcessor {
 
     if (enable_folder_templates && folder_templates) {
       for (const { folder, template } of folder_templates) {
-        if (folder && template && file.path.startsWith(folder + '/')) {
+        if (!folder || !template) continue;
+
+        // Normalize folder path - remove leading/trailing slashes for comparison
+        const normalizedFolder = folder.replace(/^\/+|\/+$/g, '');
+        const normalizedFilePath = file.path.replace(/^\/+/, '');
+
+        // Check if file is in this folder or any subfolder
+        // Match patterns:
+        // - "0 Daily ADHD Brain Logs/file.md" with folder "0 Daily ADHD Brain Logs"
+        // - "parent/0 Daily ADHD Brain Logs/file.md" with folder "0 Daily ADHD Brain Logs"
+        if (
+          normalizedFilePath.startsWith(normalizedFolder + '/') ||
+          normalizedFilePath.includes('/' + normalizedFolder + '/')
+        ) {
           return true;
         }
       }
@@ -349,7 +378,9 @@ class FileProcessor {
   }
 
   async processTemplaterComplete(file) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) =>
+      setTimeout(resolve, this.settings.templaterDetectionDelay)
+    );
 
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
     let content = await this.app.vault.read(file);
@@ -458,19 +489,32 @@ class DateTagsPlugin extends Plugin {
     }
   }
 
+  shouldSkipFile(file) {
+    if (!this.processor.isInScope(file)) {
+      return true;
+    }
+    if (this.processor.hasTemplaterConfig(file)) {
+      return true;
+    }
+    return false;
+  }
+
   async handleCreate(file) {
-    if (!this.processor.isInScope(file)) return;
-    if (this.processor.hasTemplaterConfig(file)) return;
+    if (this.shouldSkipFile(file)) {
+      return;
+    }
 
     try {
       await this.processor.processNewFile(file);
     } catch (error) {
-      console.error('DateTagsPlugin: Error handling file creation:', error);
+      console.error(`DateTagsPlugin: Error creating file ${file.path}:`, error);
     }
   }
 
   async handleModify(file) {
-    if (!this.processor.isInScope(file) || this.processor.isModifying) return;
+    if (this.shouldSkipFile(file) || this.processor.isModifying) {
+      return;
+    }
 
     const nowTs = Date.now();
     if (nowTs - this.lastUserEdit > 3000) return;
@@ -483,7 +527,10 @@ class DateTagsPlugin extends Plugin {
     try {
       await this.processor.processUserEdit(file);
     } catch (error) {
-      console.error('DateTagsPlugin: Error handling file modification:', error);
+      console.error(
+        `DateTagsPlugin: Error modifying file ${file.path}:`,
+        error
+      );
     }
   }
 
@@ -548,6 +595,19 @@ class DateTagsSettingTab extends PluginSettingTab {
         get: () => this.plugin.settings.scopeFolders.join(', '),
         set: (value) => {
           this.plugin.settings.scopeFolders = value
+            .split(',')
+            .map((f) => f.trim())
+            .filter((f) => f.length > 0);
+        },
+      },
+      {
+        name: 'Exclude folders',
+        desc: 'Comma-separated list of folder paths to exclude from processing (useful for templates, copilot files, etc.)',
+        type: 'textarea',
+        placeholder: 'Templates, copilot-custom-prompts, copilot-conversations',
+        get: () => this.plugin.settings.excludeFolders.join(', '),
+        set: (value) => {
+          this.plugin.settings.excludeFolders = value
             .split(',')
             .map((f) => f.trim())
             .filter((f) => f.length > 0);

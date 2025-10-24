@@ -1,0 +1,9 @@
+{
+  "id": "smart-vault-visualizer-ribbon",
+  "name": "Smart Vault Visualizer Ribbon",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Adds a ribbon button to visualize the current file as a cluster center using Smart Vault Visualizer",
+  "author": "Your Name",
+  "isDesktopOnly": false
+}
