@@ -7,8 +7,8 @@ const {
   Setting,
   TFile,
   Notice,
+  normalizePath,
 } = require('obsidian');
-const matter = require('gray-matter');
 
 const DEFAULT_SETTINGS = {
   baseTag: 'date',
@@ -51,157 +51,88 @@ class DateHelper {
   }
 }
 
-// Class for handling frontmatter operations using gray-matter
+// Class for handling frontmatter operations using FileManager
 class FrontmatterManager {
   constructor(settings, app) {
     this.settings = settings;
     this.app = app;
-
-    // Get Obsidian's current indentation settings
-    const indentSize = this.getObsidianIndentSize();
-
-    // YAML formatting options to ensure consistent output (js-yaml options)
-    this.yamlOptions = {
-      lineWidth: -1, // Prevent line wrapping
-      noRefs: true, // Prevent YAML references
-      flowLevel: -1, // Use block style (with dashes) instead of flow style for collections
-      sortKeys: false, // Don't sort keys to preserve original order
-      indent: indentSize, // Use Obsidian's current indentation setting
-      noArrayIndent: false, // Add indentation to array elements
-    };
   }
 
-  getObsidianIndentSize() {
-    try {
-      // Try to get the indent size from Obsidian's editor settings
-      const editorSettings = this.app.vault.config?.editor;
-      if (editorSettings) {
-        // Check for tab size or default indentation settings
-        return editorSettings.tabSize || editorSettings.indentSize || 2;
+  async ensureFrontmatter(file, timestamp) {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      // Ensure required fields exist
+      if (!frontmatter.created) {
+        frontmatter.created = timestamp;
       }
-
-      // Fallback: check app settings if available
-      const appSettings = this.app.setting?.getItem?.('editor.tabSize');
-      if (appSettings) {
-        return parseInt(appSettings, 10) || 2;
+      if (!frontmatter.modified) {
+        frontmatter.modified = timestamp;
       }
-
-      // Default fallback to 2 spaces
-      return 2;
-    } catch (error) {
-      console.log(
-        'DateTagsPlugin: Could not read Obsidian indent settings, using default (2)'
-      );
-      return 2;
-    }
+      if (this.settings.addTypeIfMissing && !frontmatter.type) {
+        frontmatter.type = this.settings.typeValue;
+      }
+    });
   }
 
-  ensureFrontmatter(content, timestamp) {
-    let parsed;
-    try {
-      parsed = matter(content);
-    } catch (error) {
-      // If parsing fails, throw error to notify user
-      throw new Error(`Failed to parse frontmatter: ${error.message}`);
-    }
-
-    // Ensure required fields exist
-    if (!parsed.data.created) {
-      parsed.data.created = timestamp;
-    }
-    if (!parsed.data.modified) {
-      parsed.data.modified = timestamp;
-    }
-    if (this.settings.addTypeIfMissing && !parsed.data.type) {
-      parsed.data.type = this.settings.typeValue;
-    }
-
-    return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
+  async updateModified(file, timestamp) {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter.modified = timestamp;
+    });
   }
 
-  createFrontmatter(timestamp) {
-    const data = {
-      created: timestamp,
-      modified: timestamp,
-    };
-
-    if (this.settings.addTypeIfMissing) {
-      data.type = this.settings.typeValue;
-    }
-
-    return matter.stringify('', data, this.yamlOptions);
-  }
-
-  updateModified(content, timestamp) {
-    try {
-      const parsed = matter(content);
-      parsed.data.modified = timestamp;
-      return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
-    } catch (error) {
-      throw new Error(`Failed to update modified timestamp: ${error.message}`);
-    }
-  }
-
-  addTag(content, tag) {
-    try {
-      const parsed = matter(content);
-
+  async addTag(file, tag) {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
       // Initialize tags array if it doesn't exist
-      if (!parsed.data.tags) {
-        parsed.data.tags = [];
+      if (!frontmatter.tags) {
+        frontmatter.tags = [];
       }
 
       // Ensure tags is an array (handle various formats)
-      if (!Array.isArray(parsed.data.tags)) {
-        if (typeof parsed.data.tags === 'string') {
-          parsed.data.tags = [parsed.data.tags];
+      if (!Array.isArray(frontmatter.tags)) {
+        if (typeof frontmatter.tags === 'string') {
+          frontmatter.tags = [frontmatter.tags];
         } else {
-          parsed.data.tags = [];
+          frontmatter.tags = [];
         }
       }
 
       // Add tag if not already present
-      if (!parsed.data.tags.includes(tag)) {
-        parsed.data.tags.push(tag);
+      if (!frontmatter.tags.includes(tag)) {
+        frontmatter.tags.push(tag);
       }
-
-      return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
-    } catch (error) {
-      throw new Error(`Failed to add tag "${tag}": ${error.message}`);
-    }
+    });
   }
 
-  ensureTagAtStart(content, tag) {
-    try {
-      const parsed = matter(content);
-
+  async ensureTagAtStart(file, tag) {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
       // Initialize tags array if it doesn't exist
-      if (!parsed.data.tags) {
-        parsed.data.tags = [];
+      if (!frontmatter.tags) {
+        frontmatter.tags = [];
       }
 
       // Ensure tags is an array (handle various formats)
-      if (!Array.isArray(parsed.data.tags)) {
-        if (typeof parsed.data.tags === 'string') {
-          parsed.data.tags = [parsed.data.tags];
+      if (!Array.isArray(frontmatter.tags)) {
+        if (typeof frontmatter.tags === 'string') {
+          frontmatter.tags = [frontmatter.tags];
         } else {
-          parsed.data.tags = [];
+          frontmatter.tags = [];
         }
       }
 
       // Remove tag if it exists elsewhere and add at start
-      const existingIndex = parsed.data.tags.indexOf(tag);
+      const existingIndex = frontmatter.tags.indexOf(tag);
       if (existingIndex > -1) {
-        parsed.data.tags.splice(existingIndex, 1);
+        frontmatter.tags.splice(existingIndex, 1);
       }
-      parsed.data.tags.unshift(tag);
+      frontmatter.tags.unshift(tag);
+    });
+  }
 
-      return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
-    } catch (error) {
-      throw new Error(
-        `Failed to ensure tag "${tag}" at start: ${error.message}`
-      );
-    }
+  async getFrontmatter(file) {
+    let frontmatterData = null;
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatterData = { ...frontmatter };
+    });
+    return frontmatterData;
   }
 }
 
@@ -220,15 +151,6 @@ class FileProcessor {
       : `DateTagsPlugin: ${message}`;
     new Notice(fullMessage, 8000); // Show for 8 seconds
     console.error(fullMessage);
-  }
-
-  async safeModify(file, content) {
-    this.isModifying = true;
-    try {
-      await this.app.vault.modify(file, content);
-    } finally {
-      this.isModifying = false;
-    }
   }
 
   isInScope(file) {
@@ -268,9 +190,9 @@ class FileProcessor {
       for (const { folder, template } of folder_templates) {
         if (!folder || !template) continue;
 
-        // Normalize folder path - remove leading/trailing slashes for comparison
-        const normalizedFolder = folder.replace(/^\/+|\/+$/g, '');
-        const normalizedFilePath = file.path.replace(/^\/+/, '');
+        // Normalize folder path for comparison
+        const normalizedFolder = normalizePath(folder);
+        const normalizedFilePath = normalizePath(file.path);
 
         // Check if file is in this folder or any subfolder
         // Match patterns:
@@ -306,74 +228,60 @@ class FileProcessor {
   async processNewFile(file) {
     const timestamp = DateHelper.formatTimestamp();
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-    let content = await this.app.vault.read(file);
 
+    this.isModifying = true;
     try {
-      content = this.frontmatterMgr.ensureFrontmatter(content, timestamp);
-      content = this.frontmatterMgr.addTag(content, todayTag);
-      await this.safeModify(file, content);
+      await this.frontmatterMgr.ensureFrontmatter(file, timestamp);
+      await this.frontmatterMgr.addTag(file, todayTag);
     } catch (error) {
       this.showError(`Failed to process new file: ${error.message}`, file.path);
+    } finally {
+      this.isModifying = false;
     }
   }
 
   async processUserEdit(file) {
     const timestamp = DateHelper.formatTimestamp();
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-    let content = await this.app.vault.read(file);
-    let needsUpdate = false;
 
+    this.isModifying = true;
     try {
       // Update modified timestamp if not delegated
       if (
         this.settings.updateFrontmatterModified &&
         !this.settings.delegateModifiedToLinter
       ) {
-        const updated = this.frontmatterMgr.updateModified(content, timestamp);
-        if (updated !== content) {
-          content = updated;
-          needsUpdate = true;
-        }
+        await this.frontmatterMgr.updateModified(file, timestamp);
       }
 
       // Preserve creation tag
       if (this.settings.preserveCreationTag) {
-        const parsed = matter(content);
-        const createdDate = DateHelper.parseCreatedDate(parsed.data);
+        const frontmatterData = await this.frontmatterMgr.getFrontmatter(file);
+        const createdDate = DateHelper.parseCreatedDate(frontmatterData);
         if (createdDate) {
           const creationTag = DateHelper.buildDateTag(
             this.settings.baseTag,
             createdDate
           );
-          const updated = this.frontmatterMgr.ensureTagAtStart(
-            content,
-            creationTag
-          );
-          if (updated !== content) {
-            content = updated;
-            needsUpdate = true;
-          }
+          await this.frontmatterMgr.ensureTagAtStart(file, creationTag);
         }
       }
 
       // Add today's tag
-      const parsed = matter(content);
-      const currentTags = Array.isArray(parsed.data.tags)
-        ? parsed.data.tags
+      const frontmatterData = await this.frontmatterMgr.getFrontmatter(file);
+      const currentTags = Array.isArray(frontmatterData.tags)
+        ? frontmatterData.tags
         : [];
       if (!currentTags.includes(todayTag)) {
-        content = this.frontmatterMgr.addTag(content, todayTag);
-        needsUpdate = true;
-      }
-
-      if (needsUpdate) {
-        await this.safeModify(file, content);
+        await this.frontmatterMgr.addTag(file, todayTag);
       }
     } catch (error) {
       this.showError(
         `Failed to process file edit: ${error.message}`,
         file.path
       );
+    } finally {
+      this.isModifying = false;
     }
   }
 
@@ -383,45 +291,34 @@ class FileProcessor {
     );
 
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-    let content = await this.app.vault.read(file);
-    let needsUpdate = false;
 
+    this.isModifying = true;
     try {
-      const parsed = matter(content);
-      const currentTags = Array.isArray(parsed.data.tags)
-        ? parsed.data.tags
+      const frontmatterData = await this.frontmatterMgr.getFrontmatter(file);
+      const currentTags = Array.isArray(frontmatterData.tags)
+        ? frontmatterData.tags
         : [];
       if (!currentTags.includes(todayTag)) {
-        content = this.frontmatterMgr.addTag(content, todayTag);
-        needsUpdate = true;
+        await this.frontmatterMgr.addTag(file, todayTag);
       }
 
       if (this.settings.preserveCreationTag) {
-        const createdDate = DateHelper.parseCreatedDate(parsed.data);
+        const createdDate = DateHelper.parseCreatedDate(frontmatterData);
         if (createdDate) {
           const creationTag = DateHelper.buildDateTag(
             this.settings.baseTag,
             createdDate
           );
-          const updated = this.frontmatterMgr.ensureTagAtStart(
-            content,
-            creationTag
-          );
-          if (updated !== content) {
-            content = updated;
-            needsUpdate = true;
-          }
+          await this.frontmatterMgr.ensureTagAtStart(file, creationTag);
         }
-      }
-
-      if (needsUpdate) {
-        await this.safeModify(file, content);
       }
     } catch (error) {
       this.showError(
         `Failed to process Templater completion: ${error.message}`,
         file.path
       );
+    } finally {
+      this.isModifying = false;
     }
   }
 }
@@ -472,8 +369,17 @@ class DateTagsPlugin extends Plugin {
 
     this.addCommand({
       id: 'add-today-date-tag',
-      name: "Add Today's Date Tag",
-      callback: () => this.addTodayTagToActiveFile(),
+      name: "Add today's date tag",
+      checkCallback: (checking) => {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (activeFile && this.processor.isInScope(activeFile)) {
+          if (!checking) {
+            this.addTodayTagToActiveFile();
+          }
+          return true;
+        }
+        return false;
+      },
     });
   }
 
@@ -553,9 +459,7 @@ class DateTagsPlugin extends Plugin {
 
     try {
       const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-      let content = await this.app.vault.read(activeFile);
-      content = this.processor.frontmatterMgr.addTag(content, todayTag);
-      await this.app.vault.modify(activeFile, content);
+      await this.processor.frontmatterMgr.addTag(activeFile, todayTag);
     } catch (error) {
       this.processor.showError(
         `Failed to add today's tag manually: ${error.message}`,
@@ -574,163 +478,162 @@ class DateTagsSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Date Tags Automation Settings' });
 
-    const settings = [
-      {
-        name: 'Base tag',
-        desc: 'The prefix for date tags (e.g., "date" creates #date/YYYY/MM/DD)',
-        type: 'text',
-        placeholder: 'date',
-        get: () => this.plugin.settings.baseTag,
-        set: (value) => {
-          this.plugin.settings.baseTag = value || 'date';
-        },
-      },
-      {
-        name: 'Scope folders',
-        desc: 'Comma-separated list of folder paths to monitor (leave empty for entire vault)',
-        type: 'textarea',
-        placeholder: 'Test/0 Daily ADHD Brain Logs, Other/Folder',
-        get: () => this.plugin.settings.scopeFolders.join(', '),
-        set: (value) => {
-          this.plugin.settings.scopeFolders = value
-            .split(',')
-            .map((f) => f.trim())
-            .filter((f) => f.length > 0);
-        },
-      },
-      {
-        name: 'Exclude folders',
-        desc: 'Comma-separated list of folder paths to exclude from processing (useful for templates, copilot files, etc.)',
-        type: 'textarea',
-        placeholder: 'Templates, copilot-custom-prompts, copilot-conversations',
-        get: () => this.plugin.settings.excludeFolders.join(', '),
-        set: (value) => {
-          this.plugin.settings.excludeFolders = value
-            .split(',')
-            .map((f) => f.trim())
-            .filter((f) => f.length > 0);
-        },
-      },
-      {
-        name: 'Update frontmatter modified',
-        desc: 'Automatically update the modified field in frontmatter on each save',
-        type: 'toggle',
-        get: () => this.plugin.settings.updateFrontmatterModified,
-        set: (value) => {
-          this.plugin.settings.updateFrontmatterModified = value;
-        },
-      },
-      {
-        name: 'Delegate modified to Linter',
-        desc: 'Let Linter plugin handle modified timestamp updates instead',
-        type: 'toggle',
-        get: () => this.plugin.settings.delegateModifiedToLinter,
-        set: (value) => {
-          this.plugin.settings.delegateModifiedToLinter = value;
-        },
-      },
-      {
-        name: 'Add type if missing',
-        desc: 'Automatically add a type field to frontmatter if not present',
-        type: 'toggle',
-        get: () => this.plugin.settings.addTypeIfMissing,
-        set: (value) => {
-          this.plugin.settings.addTypeIfMissing = value;
-        },
-      },
-      {
-        name: 'Default type value',
-        desc: 'The default value for the type field',
-        type: 'text',
-        placeholder: 'note',
-        get: () => this.plugin.settings.typeValue,
-        set: (value) => {
-          this.plugin.settings.typeValue = value || 'note';
-        },
-      },
-      {
-        name: 'Debounce delay (ms)',
-        desc: 'Minimum time between processing file modifications (prevents rapid-fire updates)',
-        type: 'number',
-        placeholder: '1500',
-        get: () => this.plugin.settings.debounceMs.toString(),
-        set: (value) => {
-          const num = parseInt(value);
-          if (!isNaN(num) && num >= 100) {
-            this.plugin.settings.debounceMs = num;
-          }
-        },
-      },
-      {
-        name: 'Preserve creation tag',
-        desc: 'Ensure the creation date tag is always present in the tag list',
-        type: 'toggle',
-        get: () => this.plugin.settings.preserveCreationTag,
-        set: (value) => {
-          this.plugin.settings.preserveCreationTag = value;
-        },
-      },
-      {
-        name: 'Templater detection delay (ms)',
-        desc: 'How long to wait after file creation to allow Templater to expand templates',
-        type: 'number',
-        placeholder: '100',
-        get: () => this.plugin.settings.templaterDetectionDelay.toString(),
-        set: (value) => {
-          const num = parseInt(value);
-          if (!isNaN(num) && num >= 0) {
-            this.plugin.settings.templaterDetectionDelay = num;
-          }
-        },
-      },
-    ];
-
-    settings.forEach((config) => {
-      const setting = new Setting(containerEl)
-        .setName(config.name)
-        .setDesc(config.desc);
-
-      if (config.type === 'text') {
-        setting.addText((text) =>
-          text
-            .setPlaceholder(config.placeholder)
-            .setValue(config.get())
-            .onChange(async (value) => {
-              config.set(value);
-              await this.plugin.saveSettings();
-            })
-        );
-      } else if (config.type === 'textarea') {
-        setting.addTextArea((text) =>
-          text
-            .setPlaceholder(config.placeholder)
-            .setValue(config.get())
-            .onChange(async (value) => {
-              config.set(value);
-              await this.plugin.saveSettings();
-            })
-        );
-      } else if (config.type === 'toggle') {
-        setting.addToggle((toggle) =>
-          toggle.setValue(config.get()).onChange(async (value) => {
-            config.set(value);
+    // Base tag setting
+    new Setting(containerEl)
+      .setName('Base tag')
+      .setDesc('The prefix for date tags (e.g., "date" creates #date/YYYY/MM/DD)')
+      .addText((text) =>
+        text
+          .setPlaceholder('date')
+          .setValue(this.plugin.settings.baseTag)
+          .onChange(async (value) => {
+            this.plugin.settings.baseTag = value || 'date';
             await this.plugin.saveSettings();
           })
-        );
-      } else if (config.type === 'number') {
-        setting.addText((text) =>
-          text
-            .setPlaceholder(config.placeholder)
-            .setValue(config.get())
+      );
+
+    // Scope folders setting
+    new Setting(containerEl)
+      .setName('Scope folders')
+      .setDesc('Comma-separated list of folder paths to monitor (leave empty for entire vault)')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('Test/0 Daily ADHD Brain Logs, Other/Folder')
+          .setValue(this.plugin.settings.scopeFolders.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.scopeFolders = value
+              .split(',')
+              .map((f) => f.trim())
+              .filter((f) => f.length > 0);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // Exclude folders setting
+    new Setting(containerEl)
+      .setName('Exclude folders')
+      .setDesc('Comma-separated list of folder paths to exclude from processing (useful for templates, copilot files, etc.)')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('Templates, copilot-custom-prompts, copilot-conversations')
+          .setValue(this.plugin.settings.excludeFolders.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.excludeFolders = value
+              .split(',')
+              .map((f) => f.trim())
+              .filter((f) => f.length > 0);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // Update frontmatter modified setting
+    new Setting(containerEl)
+      .setName('Update frontmatter modified')
+      .setDesc('Automatically update the modified field in frontmatter on each save')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.updateFrontmatterModified)
+          .onChange(async (value) => {
+            this.plugin.settings.updateFrontmatterModified = value;
+            await this.plugin.saveSettings();
+            // Re-run display function to show/hide related settings
+            this.display();
+          })
+      );
+
+    // Delegate modified to Linter setting (only show when updateFrontmatterModified is true)
+    if (this.plugin.settings.updateFrontmatterModified) {
+      new Setting(containerEl)
+        .setName('Delegate modified to Linter')
+        .setDesc('Let Linter plugin handle modified timestamp updates instead')
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.plugin.settings.delegateModifiedToLinter)
             .onChange(async (value) => {
-              config.set(value);
+              this.plugin.settings.delegateModifiedToLinter = value;
               await this.plugin.saveSettings();
             })
         );
-      }
-    });
+    }
+
+    // Add type if missing setting
+    new Setting(containerEl)
+      .setName('Add type if missing')
+      .setDesc('Automatically add a type field to frontmatter if not present')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.addTypeIfMissing)
+          .onChange(async (value) => {
+            this.plugin.settings.addTypeIfMissing = value;
+            await this.plugin.saveSettings();
+            // Re-run display function to show/hide related settings
+            this.display();
+          })
+      );
+
+    // Default type value setting (only show when addTypeIfMissing is true)
+    if (this.plugin.settings.addTypeIfMissing) {
+      new Setting(containerEl)
+        .setName('Default type value')
+        .setDesc('The default value for the type field')
+        .addText((text) =>
+          text
+            .setPlaceholder('note')
+            .setValue(this.plugin.settings.typeValue)
+            .onChange(async (value) => {
+              this.plugin.settings.typeValue = value || 'note';
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    // Debounce delay setting
+    new Setting(containerEl)
+      .setName('Debounce delay (ms)')
+      .setDesc('Minimum time between processing file modifications (prevents rapid-fire updates)')
+      .addText((text) =>
+        text
+          .setPlaceholder('1500')
+          .setValue(this.plugin.settings.debounceMs.toString())
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num >= 100) {
+              this.plugin.settings.debounceMs = num;
+            }
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // Preserve creation tag setting
+    new Setting(containerEl)
+      .setName('Preserve creation tag')
+      .setDesc('Ensure the creation date tag is always present in the tag list')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.preserveCreationTag)
+          .onChange(async (value) => {
+            this.plugin.settings.preserveCreationTag = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // Templater detection delay setting
+    new Setting(containerEl)
+      .setName('Templater detection delay (ms)')
+      .setDesc('How long to wait after file creation to allow Templater to expand templates')
+      .addText((text) =>
+        text
+          .setPlaceholder('100')
+          .setValue(this.plugin.settings.templaterDetectionDelay.toString())
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num >= 0) {
+              this.plugin.settings.templaterDetectionDelay = num;
+            }
+            await this.plugin.saveSettings();
+          })
+      );
   }
 }
 
