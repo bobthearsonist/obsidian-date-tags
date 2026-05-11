@@ -5677,10 +5677,22 @@ var FileProcessor = class {
     new Notice(fullMessage, 8e3);
     console.error(fullMessage);
   }
-  async safeModify(file, content) {
+  async safeUpdate(file, updateContent) {
     this.isModifying = true;
     try {
-      await this.app.vault.modify(file, content);
+      const current = await this.app.vault.read(file);
+      let updated = updateContent(current);
+      let latest = current;
+      if (updated !== current) {
+        latest = await this.app.vault.read(file);
+        if (latest !== current) {
+          updated = updateContent(latest);
+        }
+      }
+      if (updated !== latest) {
+        await this.app.vault.modify(file, updated);
+      }
+      return true;
     } finally {
       this.isModifying = false;
     }
@@ -5745,60 +5757,55 @@ var FileProcessor = class {
   async processNewFile(file) {
     const timestamp = DateHelper.formatTimestamp();
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-    let content = await this.app.vault.read(file);
     try {
-      content = this.frontmatterMgr.ensureFrontmatter(content, timestamp);
-      content = this.frontmatterMgr.addTag(content, todayTag);
-      await this.safeModify(file, content);
+      await this.safeUpdate(file, (current) => {
+        let content = this.frontmatterMgr.ensureFrontmatter(current, timestamp);
+        content = this.frontmatterMgr.addTag(content, todayTag);
+        return content;
+      });
+      return true;
     } catch (error) {
       this.showError(`Failed to process new file: ${error.message}`, file.path);
+      return false;
     }
   }
   async processUserEdit(file) {
     const timestamp = DateHelper.formatTimestamp();
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-    let content = await this.app.vault.read(file);
-    let needsUpdate = false;
     try {
-      if (this.settings.updateFrontmatterModified && !this.settings.delegateModifiedToLinter) {
-        const updated = this.frontmatterMgr.updateModified(content, timestamp);
-        if (updated !== content) {
-          content = updated;
-          needsUpdate = true;
+      await this.safeUpdate(file, (current) => {
+        let content = current;
+        if (this.settings.updateFrontmatterModified && !this.settings.delegateModifiedToLinter) {
+          content = this.frontmatterMgr.updateModified(content, timestamp);
         }
-      }
-      if (this.settings.preserveCreationTag) {
-        const parsed2 = matter(content);
-        const createdDate = DateHelper.parseCreatedDate(parsed2.data);
-        if (createdDate) {
-          const creationTag = DateHelper.buildDateTag(
-            this.settings.baseTag,
-            createdDate
-          );
-          const updated = this.frontmatterMgr.ensureTagAtStart(
-            content,
-            creationTag
-          );
-          if (updated !== content) {
-            content = updated;
-            needsUpdate = true;
+        if (this.settings.preserveCreationTag) {
+          const parsed2 = matter(content);
+          const createdDate = DateHelper.parseCreatedDate(parsed2.data);
+          if (createdDate) {
+            const creationTag = DateHelper.buildDateTag(
+              this.settings.baseTag,
+              createdDate
+            );
+            content = this.frontmatterMgr.ensureTagAtStart(
+              content,
+              creationTag
+            );
           }
         }
-      }
-      const parsed = matter(content);
-      const currentTags = Array.isArray(parsed.data.tags) ? parsed.data.tags : [];
-      if (!currentTags.includes(todayTag)) {
-        content = this.frontmatterMgr.addTag(content, todayTag);
-        needsUpdate = true;
-      }
-      if (needsUpdate) {
-        await this.safeModify(file, content);
-      }
+        const parsed = matter(content);
+        const currentTags = Array.isArray(parsed.data.tags) ? parsed.data.tags : [];
+        if (!currentTags.includes(todayTag)) {
+          content = this.frontmatterMgr.addTag(content, todayTag);
+        }
+        return content;
+      });
+      return true;
     } catch (error) {
       this.showError(
         `Failed to process file edit: ${error.message}`,
         file.path
       );
+      return false;
     }
   }
   async processTemplaterComplete(file) {
@@ -5806,40 +5813,37 @@ var FileProcessor = class {
       (resolve) => setTimeout(resolve, this.settings.templaterDetectionDelay)
     );
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-    let content = await this.app.vault.read(file);
-    let needsUpdate = false;
     try {
-      const parsed = matter(content);
-      const currentTags = Array.isArray(parsed.data.tags) ? parsed.data.tags : [];
-      if (!currentTags.includes(todayTag)) {
-        content = this.frontmatterMgr.addTag(content, todayTag);
-        needsUpdate = true;
-      }
-      if (this.settings.preserveCreationTag) {
-        const createdDate = DateHelper.parseCreatedDate(parsed.data);
-        if (createdDate) {
-          const creationTag = DateHelper.buildDateTag(
-            this.settings.baseTag,
-            createdDate
-          );
-          const updated = this.frontmatterMgr.ensureTagAtStart(
-            content,
-            creationTag
-          );
-          if (updated !== content) {
-            content = updated;
-            needsUpdate = true;
+      await this.safeUpdate(file, (current) => {
+        let content = current;
+        const parsed = matter(content);
+        const currentTags = Array.isArray(parsed.data.tags) ? parsed.data.tags : [];
+        if (!currentTags.includes(todayTag)) {
+          content = this.frontmatterMgr.addTag(content, todayTag);
+        }
+        if (this.settings.preserveCreationTag) {
+          const updatedParsed = matter(content);
+          const createdDate = DateHelper.parseCreatedDate(updatedParsed.data);
+          if (createdDate) {
+            const creationTag = DateHelper.buildDateTag(
+              this.settings.baseTag,
+              createdDate
+            );
+            content = this.frontmatterMgr.ensureTagAtStart(
+              content,
+              creationTag
+            );
           }
         }
-      }
-      if (needsUpdate) {
-        await this.safeModify(file, content);
-      }
+        return content;
+      });
+      return true;
     } catch (error) {
       this.showError(
         `Failed to process Templater completion: ${error.message}`,
         file.path
       );
+      return false;
     }
   }
 };
@@ -5854,6 +5858,7 @@ var DateTagsPlugin = class extends Plugin {
     this.layoutReady = false;
     this.layoutReadyTime = 0;
     this._processor = null;
+    this.processingFiles = /* @__PURE__ */ new Set();
     this.api = {
       version: 1,
       buildDateTag: (dateInput = /* @__PURE__ */ new Date()) => DateHelper.buildDateTag(
@@ -5909,14 +5914,13 @@ var DateTagsPlugin = class extends Plugin {
       })
     );
     this.registerEvent(
-      this.app.workspace.on("active-leaf-change", (leaf) => {
+      this.app.workspace.on("active-leaf-change", async (leaf) => {
         if (this.settings.updateOnFileSwitch) {
           const newActiveFile = this.app.workspace.getActiveFile();
           const previousFile = this.currentActiveFile;
           if (previousFile && this.editedFiles.has(previousFile.path)) {
             if (this.isFileSafeToModify(previousFile)) {
-              this.processor.processUserEdit(previousFile);
-              this.editedFiles.delete(previousFile.path);
+              await this.processTrackedUserEdit(previousFile, "active-leaf-change");
             }
           }
           this.currentActiveFile = newActiveFile;
@@ -6003,14 +6007,13 @@ var DateTagsPlugin = class extends Plugin {
     return true;
   }
   startIdleTimer() {
-    this.idleTimer = setInterval(() => {
+    this.idleTimer = setInterval(async () => {
       const timeSinceEdit = Date.now() - this.lastUserEdit;
       if (timeSinceEdit >= this.settings.idleTimeMs) {
         for (const filePath of this.editedFiles) {
           const file = this.app.vault.getAbstractFileByPath(filePath);
           if (file instanceof TFile && this.isFileSafeToModify(file)) {
-            this.processor.processUserEdit(file);
-            this.editedFiles.delete(filePath);
+            await this.processTrackedUserEdit(file, "idle-timer");
           }
         }
       }
@@ -6021,12 +6024,11 @@ var DateTagsPlugin = class extends Plugin {
       }
     });
   }
-  handleEditorBlur() {
+  async handleEditorBlur() {
     for (const filePath of this.editedFiles) {
       const file = this.app.vault.getAbstractFileByPath(filePath);
       if (file instanceof TFile && this.isFileSafeToModify(file)) {
-        this.processor.processUserEdit(file);
-        this.editedFiles.delete(filePath);
+        await this.processTrackedUserEdit(file, "window-blur");
       }
     }
   }
@@ -6034,10 +6036,19 @@ var DateTagsPlugin = class extends Plugin {
     if (this.shouldSkipFile(file)) {
       return;
     }
+    if (this.processingFiles.has(file.path)) {
+      this.debugLog("handleCreate: SKIPPED (already processing)", {
+        file: file.path
+      });
+      return;
+    }
+    this.processingFiles.add(file.path);
     try {
       await this.processor.processNewFile(file);
     } catch (error) {
       console.error(`DateTagsPlugin: Error creating file ${file.path}:`, error);
+    } finally {
+      this.processingFiles.delete(file.path);
     }
   }
   async handleModify(file) {
@@ -6047,6 +6058,7 @@ var DateTagsPlugin = class extends Plugin {
       isModifying: this.processor?.isModifying || false,
       layoutReady: this.layoutReady,
       inEditedFiles: this.editedFiles.has(file.path),
+      isProcessingFile: this.processingFiles.has(file.path),
       timeSinceEdit: Date.now() - this.lastUserEdit,
       idleThreshold: this.settings.idleTimeMs
     };
@@ -6075,21 +6087,44 @@ var DateTagsPlugin = class extends Plugin {
       this.debugLog("handleModify: SKIPPED (debounce)", debugData);
       return;
     }
-    this.lastProcessed.set(file.path, nowTs);
     this.debugLog("handleModify: PROCESSING", debugData);
-    try {
-      await this.processor.processUserEdit(file);
-      this.editedFiles.delete(file.path);
-      this.debugLog("handleModify: SUCCESS", { file: file.path });
-    } catch (error) {
-      this.debugLog("handleModify: ERROR", {
+    await this.processTrackedUserEdit(file, "modify");
+  }
+  async processTrackedUserEdit(file, source) {
+    if (!this.layoutReady || !this.processor)
+      return false;
+    if (this.processingFiles.has(file.path) || this.processor.isModifying) {
+      this.debugLog("processTrackedUserEdit: SKIPPED (already processing)", {
         file: file.path,
+        source
+      });
+      return false;
+    }
+    this.processingFiles.add(file.path);
+    try {
+      const success = await this.processor.processUserEdit(file);
+      if (success) {
+        this.editedFiles.delete(file.path);
+        this.lastProcessed.set(file.path, Date.now());
+        this.debugLog("processTrackedUserEdit: SUCCESS", {
+          file: file.path,
+          source
+        });
+      }
+      return success;
+    } catch (error) {
+      this.debugLog("processTrackedUserEdit: ERROR", {
+        file: file.path,
+        source,
         error: error.message
       });
       console.error(
         `DateTagsPlugin: Error modifying file ${file.path}:`,
         error
       );
+      return false;
+    } finally {
+      this.processingFiles.delete(file.path);
     }
   }
   async handleTemplaterComplete(file) {
