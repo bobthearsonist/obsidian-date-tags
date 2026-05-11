@@ -5489,16 +5489,25 @@ var matter = require_gray_matter();
 var DEFAULT_SETTINGS = {
   baseTag: "date",
   scopeFolders: [],
-  excludeFolders: ["Templates"],
+  excludeFolders: [
+    "Templates",
+    "copilot-custom-prompts",
+    "copilot-conversations"
+  ],
   updateFrontmatterModified: true,
   delegateModifiedToLinter: false,
   addTypeIfMissing: true,
   typeValue: "note",
-  debounceMs: 1500,
+  debounceMs: 3e3,
+  idleTimeMs: 5e3,
+  enableIdleUpdate: true,
+  updateOnFileSwitch: true,
+  updateOnEditorBlur: true,
   preserveCreationTag: true,
-  templaterDetectionDelay: 300
+  templaterDetectionDelay: 300,
+  enableDebugLogging: false
 };
-var DateHelper = class {
+var DateHelper = class _DateHelper {
   static formatTimestamp() {
     const now = /* @__PURE__ */ new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
@@ -5515,6 +5524,32 @@ var DateHelper = class {
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const day = String(date.getDate()).padStart(2, "0");
     return `${baseTag}/${year}/${month}/${day}`;
+  }
+  static parseDateInput(dateInput = /* @__PURE__ */ new Date()) {
+    if (dateInput instanceof Date) {
+      if (isNaN(dateInput.getTime())) {
+        throw new Error("Invalid Date object");
+      }
+      return dateInput;
+    }
+    if (typeof dateInput === "string") {
+      const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(dateInput.trim());
+      if (compact) {
+        return _DateHelper.fromLocalDateParts(Number(compact[1]), Number(compact[2]), Number(compact[3]));
+      }
+      const dashed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput.trim());
+      if (dashed) {
+        return _DateHelper.fromLocalDateParts(Number(dashed[1]), Number(dashed[2]), Number(dashed[3]));
+      }
+    }
+    throw new Error("Expected date input as Date, YYYY-MM-DD, or YYYYMMDD");
+  }
+  static fromLocalDateParts(year, month, day) {
+    const parsed = new Date(year, month - 1, day);
+    if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+      throw new Error("Invalid calendar date");
+    }
+    return parsed;
   }
   static parseCreatedDate(frontmatterData) {
     if (!frontmatterData.created)
@@ -5544,22 +5579,7 @@ var FrontmatterManager = class {
     };
   }
   getObsidianIndentSize() {
-    try {
-      const editorSettings = this.app.vault.config?.editor;
-      if (editorSettings) {
-        return editorSettings.tabSize || editorSettings.indentSize || 2;
-      }
-      const appSettings = this.app.setting?.getItem?.("editor.tabSize");
-      if (appSettings) {
-        return parseInt(appSettings, 10) || 2;
-      }
-      return 2;
-    } catch (error) {
-      console.log(
-        "DateTagsPlugin: Could not read Obsidian indent settings, using default (2)"
-      );
-      return 2;
-    }
+    return 2;
   }
   ensureFrontmatter(content, timestamp) {
     let parsed;
@@ -5697,9 +5717,10 @@ var FileProcessor = class {
       for (const { folder, template } of folder_templates) {
         if (!folder || !template)
           continue;
-        const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
-        const normalizedFilePath = file.path.replace(/^\/+/, "");
-        if (normalizedFilePath.startsWith(normalizedFolder + "/") || normalizedFilePath.includes("/" + normalizedFolder + "/")) {
+        if (file.parent && (file.parent.path === folder || file.parent.path.startsWith(folder + "/"))) {
+          return true;
+        }
+        if (file.path.startsWith(folder + "/")) {
           return true;
         }
       }
@@ -5827,14 +5848,86 @@ var DateTagsPlugin = class extends Plugin {
     super(...arguments);
     this.lastProcessed = /* @__PURE__ */ new Map();
     this.lastUserEdit = 0;
+    this.editedFiles = /* @__PURE__ */ new Set();
+    this.currentActiveFile = null;
+    this.idleTimer = null;
+    this.layoutReady = false;
+    this.layoutReadyTime = 0;
+    this._processor = null;
+    this.api = {
+      version: 1,
+      buildDateTag: (dateInput = /* @__PURE__ */ new Date()) => DateHelper.buildDateTag(
+        this.settings?.baseTag || DEFAULT_SETTINGS.baseTag,
+        DateHelper.parseDateInput(dateInput)
+      ),
+      getBaseTag: () => this.settings?.baseTag || DEFAULT_SETTINGS.baseTag
+    };
+  }
+  // Lazy initialization of FileProcessor - only create after layout is ready
+  get processor() {
+    if (!this._processor && this.layoutReady) {
+      this.debugLog("Creating FileProcessor (lazy init)");
+      this._processor = new FileProcessor(this.app, this.settings);
+    }
+    return this._processor;
+  }
+  debugLog(message, data = null) {
+    if (this.settings?.enableDebugLogging) {
+      const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+      const layoutStatus = this.layoutReady ? "READY" : "NOT_READY";
+      const timeSinceReady = this.layoutReady ? `+${Date.now() - this.layoutReadyTime}ms` : "N/A";
+      console.log(
+        `[DateTags ${timestamp}] [${layoutStatus}${timeSinceReady !== "N/A" ? ` ${timeSinceReady}` : ""}] ${message}`,
+        data || ""
+      );
+    }
   }
   async onload() {
+    this.debugLog("onload() started");
     await this.loadSettings();
-    this.processor = new FileProcessor(this.app, this.settings);
     this.addSettingTab(new DateTagsSettingTab(this.app, this));
+    this.app.workspace.onLayoutReady(() => {
+      this.layoutReady = true;
+      this.layoutReadyTime = Date.now();
+      const clearedCount = this.editedFiles.size;
+      this.editedFiles.clear();
+      this.debugLog("onLayoutReady fired", {
+        clearedEditedFiles: clearedCount,
+        filesCleared: clearedCount > 0 ? Array.from(this.editedFiles) : []
+      });
+    });
     this.registerEvent(
-      this.app.workspace.on("editor-change", () => {
+      this.app.workspace.on("editor-change", (editor, view) => {
         this.lastUserEdit = Date.now();
+        if (view.file?.path) {
+          this.editedFiles.add(view.file.path);
+          this.debugLog("editor-change event", {
+            file: view.file.path,
+            editedFilesCount: this.editedFiles.size
+          });
+        }
+      })
+    );
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", (leaf) => {
+        if (this.settings.updateOnFileSwitch) {
+          const newActiveFile = this.app.workspace.getActiveFile();
+          const previousFile = this.currentActiveFile;
+          if (previousFile && this.editedFiles.has(previousFile.path)) {
+            if (this.isFileSafeToModify(previousFile)) {
+              this.processor.processUserEdit(previousFile);
+              this.editedFiles.delete(previousFile.path);
+            }
+          }
+          this.currentActiveFile = newActiveFile;
+        }
+      })
+    );
+    this.registerEvent(
+      this.app.workspace.on("window-blur", () => {
+        if (this.settings.updateOnEditorBlur) {
+          this.handleEditorBlur();
+        }
       })
     );
     this.registerEvent(
@@ -5857,31 +5950,14 @@ var DateTagsPlugin = class extends Plugin {
         )
       );
     });
+    if (this.settings.enableIdleUpdate) {
+      this.startIdleTimer();
+    }
     this.addCommand({
       id: "add-today-date-tag",
       name: "Add Today's Date Tag",
       callback: () => this.addTodayTagToActiveFile()
     });
-    this.addRibbonIcon("git-fork", "Open Smart Connections Visualizer (Center)", () => {
-      this.openSmartConnectionsVisualizer();
-    });
-  }
-  openSmartConnectionsVisualizer() {
-    try {
-      const existingLeaf = this.app.workspace.getLeavesOfType("smart-connections-visualizer")[0];
-      if (existingLeaf) {
-        this.app.workspace.setActiveLeaf(existingLeaf);
-      } else {
-        let leaf = this.app.workspace.getRightLeaf(false);
-        leaf.setViewState({
-          type: "smart-connections-visualizer",
-          active: true
-        });
-      }
-    } catch (error) {
-      new Notice("Failed to open Smart Connections Visualizer. Make sure the plugin is installed and enabled.");
-      console.error("Error opening Smart Connections Visualizer:", error);
-    }
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -5892,8 +5968,17 @@ var DateTagsPlugin = class extends Plugin {
       this.processor.settings = this.settings;
       this.processor.frontmatterMgr.settings = this.settings;
     }
+    if (this.idleTimer) {
+      clearInterval(this.idleTimer);
+      this.idleTimer = null;
+    }
+    if (this.settings.enableIdleUpdate) {
+      this.startIdleTimer();
+    }
   }
   shouldSkipFile(file) {
+    if (!this.layoutReady)
+      return true;
     if (!this.processor.isInScope(file)) {
       return true;
     }
@@ -5901,6 +5986,49 @@ var DateTagsPlugin = class extends Plugin {
       return true;
     }
     return false;
+  }
+  isFileSafeToModify(file) {
+    if (!this.layoutReady)
+      return false;
+    if (!this.processor.isInScope(file))
+      return false;
+    const activeFile = this.app.workspace.getActiveFile();
+    if (activeFile && activeFile.path === file.path)
+      return false;
+    const timeSinceEdit = Date.now() - this.lastUserEdit;
+    if (timeSinceEdit < this.settings.idleTimeMs)
+      return false;
+    if (this.processor.isModifying)
+      return false;
+    return true;
+  }
+  startIdleTimer() {
+    this.idleTimer = setInterval(() => {
+      const timeSinceEdit = Date.now() - this.lastUserEdit;
+      if (timeSinceEdit >= this.settings.idleTimeMs) {
+        for (const filePath of this.editedFiles) {
+          const file = this.app.vault.getAbstractFileByPath(filePath);
+          if (file instanceof TFile && this.isFileSafeToModify(file)) {
+            this.processor.processUserEdit(file);
+            this.editedFiles.delete(filePath);
+          }
+        }
+      }
+    }, 2e3);
+    this.register(() => {
+      if (this.idleTimer) {
+        clearInterval(this.idleTimer);
+      }
+    });
+  }
+  handleEditorBlur() {
+    for (const filePath of this.editedFiles) {
+      const file = this.app.vault.getAbstractFileByPath(filePath);
+      if (file instanceof TFile && this.isFileSafeToModify(file)) {
+        this.processor.processUserEdit(file);
+        this.editedFiles.delete(filePath);
+      }
+    }
   }
   async handleCreate(file) {
     if (this.shouldSkipFile(file)) {
@@ -5913,19 +6041,51 @@ var DateTagsPlugin = class extends Plugin {
     }
   }
   async handleModify(file) {
-    if (this.shouldSkipFile(file) || this.processor.isModifying) {
+    const debugData = {
+      file: file.path,
+      shouldSkip: this.shouldSkipFile(file),
+      isModifying: this.processor?.isModifying || false,
+      layoutReady: this.layoutReady,
+      inEditedFiles: this.editedFiles.has(file.path),
+      timeSinceEdit: Date.now() - this.lastUserEdit,
+      idleThreshold: this.settings.idleTimeMs
+    };
+    if (this.shouldSkipFile(file) || this.processor?.isModifying) {
+      this.debugLog(
+        "handleModify: SKIPPED (shouldSkip or isModifying)",
+        debugData
+      );
+      return;
+    }
+    if (!this.layoutReady) {
+      this.debugLog("handleModify: SKIPPED (layoutNotReady)", debugData);
+      return;
+    }
+    if (!this.editedFiles.has(file.path)) {
+      this.debugLog("handleModify: SKIPPED (notInEditedFiles)", debugData);
       return;
     }
     const nowTs = Date.now();
-    if (nowTs - this.lastUserEdit > 3e3)
+    if (nowTs - this.lastUserEdit < this.settings.idleTimeMs) {
+      this.debugLog("handleModify: SKIPPED (userNotIdle)", debugData);
       return;
+    }
     const last = this.lastProcessed.get(file.path) || 0;
-    if (nowTs - last < this.settings.debounceMs)
+    if (nowTs - last < this.settings.debounceMs) {
+      this.debugLog("handleModify: SKIPPED (debounce)", debugData);
       return;
+    }
     this.lastProcessed.set(file.path, nowTs);
+    this.debugLog("handleModify: PROCESSING", debugData);
     try {
       await this.processor.processUserEdit(file);
+      this.editedFiles.delete(file.path);
+      this.debugLog("handleModify: SUCCESS", { file: file.path });
     } catch (error) {
+      this.debugLog("handleModify: ERROR", {
+        file: file.path,
+        error: error.message
+      });
       console.error(
         `DateTagsPlugin: Error modifying file ${file.path}:`,
         error
@@ -5933,6 +6093,8 @@ var DateTagsPlugin = class extends Plugin {
     }
   }
   async handleTemplaterComplete(file) {
+    if (!this.layoutReady || !this.processor)
+      return;
     if (!this.processor.isInScope(file))
       return;
     try {
@@ -5946,6 +6108,8 @@ var DateTagsPlugin = class extends Plugin {
   }
   async addTodayTagToActiveFile() {
     const activeFile = this.app.workspace.getActiveFile();
+    if (!this.layoutReady || !this.processor)
+      return;
     if (!activeFile || !this.processor.isInScope(activeFile))
       return;
     try {
@@ -6042,13 +6206,53 @@ var DateTagsSettingTab = class extends PluginSettingTab {
         name: "Debounce delay (ms)",
         desc: "Minimum time between processing file modifications (prevents rapid-fire updates)",
         type: "number",
-        placeholder: "1500",
+        placeholder: "3000",
         get: () => this.plugin.settings.debounceMs.toString(),
         set: (value) => {
           const num = parseInt(value);
           if (!isNaN(num) && num >= 100) {
             this.plugin.settings.debounceMs = num;
           }
+        }
+      },
+      {
+        name: "Idle time before update (ms)",
+        desc: "How long user must stop typing before updates are applied",
+        type: "number",
+        placeholder: "5000",
+        get: () => this.plugin.settings.idleTimeMs.toString(),
+        set: (value) => {
+          const num = parseInt(value);
+          if (!isNaN(num) && num >= 1e3) {
+            this.plugin.settings.idleTimeMs = num;
+          }
+        }
+      },
+      {
+        name: "Enable idle updates",
+        desc: "Automatically update files after idle time expires",
+        type: "toggle",
+        get: () => this.plugin.settings.enableIdleUpdate,
+        set: (value) => {
+          this.plugin.settings.enableIdleUpdate = value;
+        }
+      },
+      {
+        name: "Update on file switch",
+        desc: "Update file when switching to a different note",
+        type: "toggle",
+        get: () => this.plugin.settings.updateOnFileSwitch,
+        set: (value) => {
+          this.plugin.settings.updateOnFileSwitch = value;
+        }
+      },
+      {
+        name: "Update on editor blur",
+        desc: "Update file when editor loses focus (clicking outside Obsidian)",
+        type: "toggle",
+        get: () => this.plugin.settings.updateOnEditorBlur,
+        set: (value) => {
+          this.plugin.settings.updateOnEditorBlur = value;
         }
       },
       {

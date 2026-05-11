@@ -51,6 +51,21 @@ Your existing requirements are met:
 
 ## Integration with Other Plugins
 
+### Plugin API
+
+Other plugins can read the configured date-tag convention without duplicating it:
+
+```js
+const api = app.plugins.plugins['date-tags']?.api;
+const tag = api?.buildDateTag('2026-05-11'); // date/2026/05/11 by default
+```
+
+The API is intentionally small:
+
+- `api.version` — currently `1`
+- `api.buildDateTag(date)` — accepts `Date`, `YYYY-MM-DD`, or `YYYYMMDD`
+- `api.getBaseTag()` — returns the configured base tag
+
 ### Templater
 
 The plugin works seamlessly with Templater:
