@@ -5476,6 +5476,85 @@ var require_gray_matter = __commonJS({
   }
 });
 
+// templater-compat.js
+var require_templater_compat = __commonJS({
+  "templater-compat.js"(exports2, module2) {
+    function pathIsInFolder(file, folder) {
+      const normalizedFolder = String(folder || "").replace(/\/+$/, "");
+      if (!normalizedFolder)
+        return false;
+      return file.parent?.path === normalizedFolder || file.parent?.path?.startsWith(`${normalizedFolder}/`) || file.path?.startsWith(`${normalizedFolder}/`);
+    }
+    function getCreationTriggerState(templater) {
+      const getControlValue = templater?.settingTab?.getControlValue;
+      if (typeof getControlValue !== "function")
+        return null;
+      try {
+        const value = getControlValue.call(
+          templater.settingTab,
+          "trigger_on_file_creation"
+        );
+        return typeof value === "boolean" ? value : null;
+      } catch (error) {
+        console.warn(
+          "DateTagsPlugin: Unable to read Templater creation trigger state:",
+          error
+        );
+        return null;
+      }
+    }
+    function matchesTemplaterCreationRule2(templater, file) {
+      if (!templater?.settings || !file?.path)
+        return false;
+      const settings = templater.settings;
+      if (getCreationTriggerState(templater) === false)
+        return false;
+      const isIgnored = (settings.ignore_folders_on_creation || []).some(
+        (entry) => pathIsInFolder(file, typeof entry === "string" ? entry : entry?.folder)
+      );
+      if (isIgnored)
+        return false;
+      const mode = settings.trigger_on_file_creation_mode;
+      const folderMode = mode === "folder" || mode == null && settings.enable_folder_templates === true;
+      const regexMode = mode === "regex" || mode == null && settings.enable_file_templates === true;
+      if (folderMode) {
+        for (const { folder, template } of settings.folder_templates || []) {
+          if (folder && template && pathIsInFolder(file, folder)) {
+            return true;
+          }
+        }
+      }
+      if (regexMode) {
+        for (const { regex, template } of settings.file_templates || []) {
+          if (!regex || !template)
+            continue;
+          try {
+            if (new RegExp(regex).test(file.path))
+              return true;
+          } catch (error) {
+            console.error(
+              "DateTagsPlugin: Invalid regex in Templater file_templates:",
+              error
+            );
+          }
+        }
+      }
+      return false;
+    }
+    function resolveTemplaterEventFile2(payload) {
+      if (!payload || typeof payload !== "object")
+        return null;
+      if (typeof payload.path === "string")
+        return payload;
+      return payload.file || payload.view?.file || payload.editor?.file || null;
+    }
+    module2.exports = {
+      matchesTemplaterCreationRule: matchesTemplaterCreationRule2,
+      resolveTemplaterEventFile: resolveTemplaterEventFile2
+    };
+  }
+});
+
 // main.source.js
 var import_buffer_polyfill = __toESM(require_buffer_polyfill());
 var {
@@ -5486,6 +5565,10 @@ var {
   Notice
 } = require("obsidian");
 var matter = require_gray_matter();
+var {
+  matchesTemplaterCreationRule,
+  resolveTemplaterEventFile
+} = require_templater_compat();
 var DEFAULT_SETTINGS = {
   baseTag: "date",
   scopeFolders: [],
@@ -5717,42 +5800,7 @@ var FileProcessor = class {
   }
   hasTemplaterConfig(file) {
     const templater = this.app.plugins.plugins["templater-obsidian"];
-    if (!templater?.settings)
-      return false;
-    const {
-      enable_folder_templates,
-      folder_templates,
-      enable_file_templates,
-      file_templates
-    } = templater.settings;
-    if (enable_folder_templates && folder_templates) {
-      for (const { folder, template } of folder_templates) {
-        if (!folder || !template)
-          continue;
-        if (file.parent && (file.parent.path === folder || file.parent.path.startsWith(folder + "/"))) {
-          return true;
-        }
-        if (file.path.startsWith(folder + "/")) {
-          return true;
-        }
-      }
-    }
-    if (enable_file_templates && file_templates) {
-      for (const { regex, template } of file_templates) {
-        if (regex && template) {
-          try {
-            if (new RegExp(regex).test(file.path))
-              return true;
-          } catch (error) {
-            console.error(
-              "DateTagsPlugin: Invalid regex in Templater file_templates:",
-              error
-            );
-          }
-        }
-      }
-    }
-    return false;
+    return matchesTemplaterCreationRule(templater, file);
   }
   async processNewFile(file) {
     const timestamp = DateHelper.formatTimestamp();
@@ -5950,7 +5998,7 @@ var DateTagsPlugin = class extends Plugin {
       this.registerEvent(
         this.app.workspace.on(
           eventName,
-          (file) => this.handleTemplaterComplete(file)
+          (payload) => this.handleTemplaterComplete(resolveTemplaterEventFile(payload))
         )
       );
     });
@@ -6376,4 +6424,270 @@ strip-bom-string/index.js:
    * Copyright (c) 2015, 2017, Jon Schlinkert.
    * Released under the MIT License.
    *)
+*/
+
+/*!
+Date Tags Automation
+Copyright (C) 2025 bobthearsonist
+GPL-3.0-or-later; see https://www.gnu.org/licenses/gpl-3.0.html
+
+---
+
+base64-js
+
+The MIT License (MIT)
+
+Copyright (c) 2014 Jameson Little
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+---
+
+buffer
+
+The MIT License (MIT)
+
+Copyright (c) Feross Aboukhadijeh, and other contributors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+---
+
+extend-shallow
+
+The MIT License (MIT)
+
+Copyright (c) 2014-2015, Jon Schlinkert.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+---
+
+gray-matter
+
+The MIT License (MIT)
+
+Copyright (c) 2014-2018, Jon Schlinkert.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+---
+
+ieee754
+
+Copyright 2008 Fair Oaks Labs, Inc.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+---
+
+is-extendable
+
+The MIT License (MIT)
+
+Copyright (c) 2015, Jon Schlinkert.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+---
+
+js-yaml
+
+(The MIT License)
+
+Copyright (C) 2011-2015 by Vitaly Puzrin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+---
+
+kind-of
+
+The MIT License (MIT)
+
+Copyright (c) 2014-2017, Jon Schlinkert.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+---
+
+section-matter
+
+The MIT License (MIT)
+
+Copyright (c) 2017, Jon Schlinkert.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+---
+
+strip-bom-string
+
+The MIT License (MIT)
+
+Copyright (c) 2015, 2017, Jon Schlinkert
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
 */

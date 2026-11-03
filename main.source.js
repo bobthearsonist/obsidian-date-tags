@@ -9,6 +9,10 @@ const {
   Notice,
 } = require('obsidian');
 const matter = require('gray-matter');
+const {
+  matchesTemplaterCreationRule,
+  resolveTemplaterEventFile,
+} = require('./templater-compat');
 
 const DEFAULT_SETTINGS = {
   baseTag: 'date',
@@ -294,52 +298,7 @@ class FileProcessor {
 
   hasTemplaterConfig(file) {
     const templater = this.app.plugins.plugins['templater-obsidian'];
-    if (!templater?.settings) return false;
-
-    const {
-      enable_folder_templates,
-      folder_templates,
-      enable_file_templates,
-      file_templates,
-    } = templater.settings;
-
-    if (enable_folder_templates && folder_templates) {
-      for (const { folder, template } of folder_templates) {
-        if (!folder || !template) continue;
-
-        // Simple approach: check if file's folder path starts with or equals the template folder
-        // This handles both exact matches and subfolders
-        if (
-          file.parent &&
-          (file.parent.path === folder ||
-            file.parent.path.startsWith(folder + '/'))
-        ) {
-          return true;
-        }
-
-        // Also check if the file path itself starts with the folder (fallback for edge cases)
-        if (file.path.startsWith(folder + '/')) {
-          return true;
-        }
-      }
-    }
-
-    if (enable_file_templates && file_templates) {
-      for (const { regex, template } of file_templates) {
-        if (regex && template) {
-          try {
-            if (new RegExp(regex).test(file.path)) return true;
-          } catch (error) {
-            console.error(
-              'DateTagsPlugin: Invalid regex in Templater file_templates:',
-              error
-            );
-          }
-        }
-      }
-    }
-
-    return false;
+    return matchesTemplaterCreationRule(templater, file);
   }
 
   async processNewFile(file) {
@@ -591,8 +550,8 @@ class DateTagsPlugin extends Plugin {
 
     templaterEvents.forEach((eventName) => {
       this.registerEvent(
-        this.app.workspace.on(eventName, (file) =>
-          this.handleTemplaterComplete(file)
+        this.app.workspace.on(eventName, (payload) =>
+          this.handleTemplaterComplete(resolveTemplaterEventFile(payload))
         )
       );
     });

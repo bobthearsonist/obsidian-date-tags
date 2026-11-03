@@ -1,158 +1,106 @@
-# Date Tags Automation Plugin
+# Date Tags Automation
 
-Automatically manages created/modified frontmatter and appends daily nested date tags on every modification for Obsidian notes.
+Maintain creation and modification timestamps and a daily date-tag history in your Markdown notes.
 
 ## Features
 
-- **Automatic Frontmatter Management**: Adds `created`, `modified`, and optional `type` fields to all notes
-- **Date Tag Tracking**: Automatically appends nested date tags (`#date/YYYY/MM/DD`) on every modification
-- **Creation Tag Preservation**: Ensures the creation date tag is always preserved in the tag list
-- **Cross-Platform**: Works on desktop and mobile (iOS/Android)
-- **Templater Integration**: Plays nicely with Templater plugin for template-based note creation
-- **Linter Compatibility**: Can delegate modified timestamp updates to Linter plugin
-- **Configurable Scope**: Can be limited to specific folders or applied vault-wide
+- Add `created`, `modified`, and an optional `type` property to new notes.
+- Add a nested frontmatter tag such as `date/2026/11/03` after tracked editor changes.
+- Keep the creation-date tag first and avoid duplicate tags for the same day.
+- Limit processing to selected folders and exclude templates or other folders.
+- Wait for Templater to finish creating notes, including Templater 2.x.
+- Optionally leave modified timestamps to Linter.
+- Work on desktop and mobile without network requests, accounts, or telemetry.
 
-## Requirements
-
-Your existing requirements are met:
-
-- On creation: Sets `created` and `modified` frontmatter timestamps, adds initial date tag
-- On modification: Updates `modified` timestamp, appends new date tag (even same-day duplicates)
-- Creation date tag persists in tag list
-- Works on mobile devices
+Requires Obsidian 1.5.0 or later. Templater and Linter are optional.
 
 ## Installation
 
-1. Copy the plugin files to your vault: `.obsidian/plugins/date-tags-plugin/`
-2. Reload Obsidian or restart the app
-3. Enable "Date Tags Automation" in Settings > Community Plugins
-4. Configure settings as needed in Settings > Date Tags Automation
+The plugin is not yet listed in the community directory.
+
+### Manual installation
+
+1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/bobthearsonist/obsidian-date-tags/releases/latest).
+2. Create `.obsidian/plugins/date-tags/` inside your vault and put both files there.
+3. Reload Obsidian, enable **Date Tags Automation** under **Settings > Community plugins**, and review its settings.
+
+The folder must match the manifest ID, `date-tags`. The GitHub repository name does not need to match it.
+If you already installed the plugin in a differently named folder, keep a backup of its settings and avoid enabling two copies.
+
+## How tracking works
+
+New, in-scope Markdown files receive initial frontmatter and today's date tag. When a matching Templater creation rule is enabled, Date Tags waits for Templater's completion event instead.
+
+Existing notes are tracked through Obsidian's `editor-change` event. Processing waits until you have been idle, with optional file-switch and editor-blur checks. The default idle threshold is five seconds and the processing debounce is three seconds.
+
+**External writes are not automatically treated as user edits.** Sync, filesystem changes, and writes from other plugins or CLI commands do not necessarily emit `editor-change`. A plain vault modification is intentionally insufficient, to avoid tagging every synced note as edited today. There is no dedicated agent-write or CLI event bridge in this version.
+
+The command **Date Tags Automation: Add Today's Date Tag** adds a tag to the active note. It does not update its modified timestamp.
+
+Tags are stored in the `tags` frontmatter property, not appended to the note body:
+
+```yaml
+---
+created: 2026-11-02 09:00:00
+modified: 2026-11-03 10:30:00
+type: note
+tags:
+  - date/2026/11/02
+  - date/2026/11/03
+---
+```
+
+Backdated notes should set `created` to their intended creation date. Template-completion processing preserves that date's tag and adds today's tag without overwriting template timestamps.
 
 ## Settings
 
-### Core Settings
+- **Base tag**: defaults to `date`.
+- **Scope folders**: comma-separated folders; empty means the entire vault.
+- **Exclude folders**: defaults to `Templates`, `copilot-custom-prompts`, and `copilot-conversations`.
+- **Update frontmatter modified** / **Delegate modified to Linter**: control timestamp updates after tracked edits.
+- **Add type if missing** / **Default type value**: control the initial type property.
+- **Debounce delay** and **Idle time**: control when tracked edits are processed.
+- **Enable idle updates**, **Update on file switch**, and **Update on editor blur**: enable the corresponding processing checks.
+- **Preserve creation tag**: keep the creation-date tag first.
+- **Templater detection delay**: delay after template-completion events, default 300 milliseconds.
 
-- **Base tag**: Prefix for date tags (default: "date" creates `#date/YYYY/MM/DD`)
-- **Allow same-day duplicates**: Add new date tag even if one exists for today (default: enabled)
-- **Scope folders**: Comma-separated folder paths to monitor (empty = entire vault)
+An actively open note may wait until you switch away before an idle/blur check can safely update it.
 
-### Frontmatter Settings
+## Plugin API
 
-- **Update frontmatter modified**: Auto-update modified field on each save (default: enabled)
-- **Delegate modified to Linter**: Let Linter plugin handle modified timestamps instead
-- **Add type if missing**: Automatically add type field to frontmatter (default: enabled)
-- **Default type value**: Value for type field (default: "note")
-
-### Advanced Settings
-
-- **Debounce delay**: Minimum time between processing modifications in milliseconds (default: 1500)
-- **Preserve creation tag**: Ensure creation date tag always present (default: enabled)
-- **Templater detection delay**: Wait time for Templater expansion in milliseconds (default: 100)
-
-## Integration with Other Plugins
-
-### Plugin API
-
-Other plugins can read the configured date-tag convention without duplicating it:
+Other plugins can read the date-tag convention:
 
 ```js
 const api = app.plugins.plugins['date-tags']?.api;
-const tag = api?.buildDateTag('2026-05-11'); // date/2026/05/11 by default
+const tag = api?.buildDateTag('2026-11-03'); // date/2026/11/03 by default
 ```
 
-The API is intentionally small:
-
-- `api.version` — currently `1`
-- `api.buildDateTag(date)` — accepts `Date`, `YYYY-MM-DD`, or `YYYYMMDD`
-- `api.getBaseTag()` — returns the configured base tag
-
-### Templater
-
-The plugin works seamlessly with Templater:
-
-- Template-created notes: Templater handles initial frontmatter and date tag via placeholders
-- Non-template notes: Plugin adds frontmatter and initial tag automatically
-- No conflicts: Plugin detects Templater placeholders and waits for expansion
-
-### Linter
-
-For Linter compatibility:
-
-1. Enable "Delegate modified to Linter" if you want Linter to handle timestamp formatting
-2. Ensure Linter doesn't have rules that consolidate duplicate tags
-3. Linter will format YAML but preserve the date tag history
-
-## Example Output
-
-### New Note (Created via Template)
-
-```markdown
----
-created: 2025-10-19 16:55:00
-modified: 2025-10-19 16:55:00
-type: daily-log
----
-
-#adhd-brain-log #daily #date/2025/10/19
-```
-
-### After Multiple Edits
-
-```markdown
----
-created: 2025-10-19 16:55:00
-modified: 2025-10-20 09:30:15
-type: daily-log
----
-
-#adhd-brain-log #daily #date/2025/10/19 #date/2025/10/19 #date/2025/10/20
-```
-
-## Commands
-
-- **Add Today's Date Tag**: Manually add today's date tag to the active file (Command Palette)
+API version `1` exposes `buildDateTag(date)` and `getBaseTag()`. Dates may be a `Date`, `YYYY-MM-DD`, or `YYYYMMDD`.
+This is a read-only API; it does not mark notes as edited.
 
 ## Troubleshooting
 
-### Tags Not Being Added
+- Check the scope and excluded folders if tags are missing.
+- For existing notes, confirm the change came through the editor, then allow the idle delay or switch notes.
+- Templater's creation trigger is device-local in current versions: enable it on each device where you use folder or regex templates.
+- Malformed frontmatter reports an error instead of being silently replaced. Repair the YAML before retrying.
+- If Linter manages modified timestamps, enable delegation and configure Linter separately.
 
-- Check that the file is in scope (scope folders setting)
-- Verify debounce delay hasn't prevented processing
-- Ensure file is markdown (`.md` extension)
+Back up your vault before enabling automated frontmatter changes.
 
-### Frontmatter Issues
+## Development
 
-- Plugin detects existing frontmatter by looking for `---` at file start
-- Malformed frontmatter will be replaced with new block
-- Blank line before closing `---` prevents formatting issues
+```sh
+npm ci
+npm test
+npm run build
+```
 
-### Templater Conflicts
+`main.source.js` is the plugin entry point. The build bundles browser-compatible dependencies and their license notices into `main.js`. Release tags must exactly match `manifest.json`'s version, without a `v` prefix. Attach `main.js` and `manifest.json` to each release.
 
-- Plugin waits for Templater expansion before processing
-- Increase "Templater detection delay" if conflicts occur
-- Plugin skips files with active Templater placeholders (`<% %>`)
+## License and support
 
-### Performance
+Date Tags Automation is licensed under [GPL-3.0-or-later](LICENSE), with the full license in [COPYING](COPYING).
+Bundled third-party packages retain their own licenses; their complete notices are included in `main.js`.
 
-- Adjust debounce delay for faster/slower response
-- Limit scope folders to reduce processing overhead
-- Plugin only processes markdown files in configured scope
-
-## Technical Details
-
-- Pure JavaScript, no external dependencies
-- Uses Obsidian's native event system (`vault.on('create')`, `vault.on('modify')`)
-- Debounced modification handling prevents rapid-fire updates
-- Minimal regex operations for frontmatter updates
-- Mobile-compatible (no Node.js dependencies)
-
-## Support
-
-This plugin implements the exact behavior specified:
-
-- Creation date tag in frontmatter and preserved in tag list
-- Modified timestamp updated on each save
-- New date tag added on every modification (including same-day duplicates)
-- Cross-platform compatibility (desktop and mobile)
-
-For issues or feature requests, refer to your Obsidian plugin development documentation.
+[Report a bug or request a feature](https://github.com/bobthearsonist/obsidian-date-tags/issues).
