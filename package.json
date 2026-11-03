@@ -1,6 +1,6 @@
 {
   "name": "date-tags-plugin",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Maintain creation and modification timestamps and daily date tags for notes edited in Obsidian.",
   "main": "main.js",
   "scripts": {

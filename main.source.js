@@ -13,6 +13,7 @@ const {
   matchesTemplaterCreationRule,
   resolveTemplaterEventFile,
 } = require('./templater-compat');
+const { createCliEditTracker } = require('./cli-edit-tracker');
 
 const DEFAULT_SETTINGS = {
   baseTag: 'date',
@@ -32,6 +33,7 @@ const DEFAULT_SETTINGS = {
   updateOnFileSwitch: true,
   updateOnEditorBlur: true,
   preserveCreationTag: true,
+  tagCliEdits: true,
   templaterDetectionDelay: 300,
   enableDebugLogging: false,
 };
@@ -487,6 +489,17 @@ class DateTagsPlugin extends Plugin {
         clearedEditedFiles: clearedCount,
         filesCleared: clearedCount > 0 ? Array.from(this.editedFiles) : [],
       });
+
+      // The CLI bridge exists only on desktop and is installed at app startup.
+      this.cliTracker = createCliEditTracker({
+        target: window,
+        isEnabled: () => this.settings.tagCliEdits,
+        onCommandSettled: (paths, command) =>
+          this.processCliEdits(paths, command),
+      });
+      if (this.cliTracker.install()) {
+        this.register(() => this.cliTracker?.uninstall());
+      }
     });
 
     // Track user edits and which files were edited
@@ -679,6 +692,16 @@ class DateTagsPlugin extends Plugin {
   }
 
   async handleModify(file) {
+    // CLI edits are tagged once the command finishes; see processCliEdits.
+    if (
+      this.layoutReady &&
+      !this.processor?.isModifying &&
+      this.cliTracker?.noteModified(file.path)
+    ) {
+      this.debugLog('handleModify: DEFERRED (CLI command)', { file: file.path });
+      return;
+    }
+
     const debugData = {
       file: file.path,
       shouldSkip: this.shouldSkipFile(file),
@@ -767,6 +790,24 @@ class DateTagsPlugin extends Plugin {
       return false;
     } finally {
       this.processingFiles.delete(file.path);
+    }
+  }
+
+  async processCliEdits(paths, command) {
+    if (!this.layoutReady || !this.processor) return;
+
+    for (const path of paths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile) || !this.processor.isInScope(file)) continue;
+
+      // Leave a note the user is typing in to the normal idle-based path.
+      const activeFile = this.app.workspace.getActiveFile();
+      const userTyping =
+        activeFile?.path === file.path &&
+        Date.now() - this.lastUserEdit < this.settings.idleTimeMs;
+      const done =
+        !userTyping && (await this.processTrackedUserEdit(file, `cli:${command}`));
+      if (!done) this.editedFiles.add(file.path);
     }
   }
 
@@ -939,6 +980,15 @@ class DateTagsSettingTab extends PluginSettingTab {
         get: () => this.plugin.settings.updateOnEditorBlur,
         set: (value) => {
           this.plugin.settings.updateOnEditorBlur = value;
+        },
+      },
+      {
+        name: 'Tag notes edited by the CLI',
+        desc: 'Update notes changed by Obsidian CLI commands (append, property:set, eval, ...) as soon as the command finishes. Desktop only.',
+        type: 'toggle',
+        get: () => this.plugin.settings.tagCliEdits,
+        set: (value) => {
+          this.plugin.settings.tagCliEdits = value;
         },
       },
       {

@@ -5,7 +5,7 @@ Maintain creation and modification timestamps and a daily date-tag history in yo
 ## Features
 
 - Add `created`, `modified`, and an optional `type` property to new notes.
-- Add a nested frontmatter tag such as `date/2026/11/03` after tracked editor changes.
+- Add a nested frontmatter tag such as `date/2026/11/03` after tracked editor changes and Obsidian CLI edits.
 - Keep the creation-date tag first and avoid duplicate tags for the same day.
 - Limit processing to selected folders and exclude templates or other folders.
 - Wait for Templater to finish creating notes, including Templater 2.x.
@@ -33,7 +33,9 @@ New, in-scope Markdown files receive initial frontmatter and today's date tag. W
 
 Existing notes are tracked through Obsidian's `editor-change` event. Processing waits until you have been idle, with optional file-switch and editor-blur checks. The default idle threshold is five seconds and the processing debounce is three seconds.
 
-**External writes are not automatically treated as user edits.** Sync, filesystem changes, and writes from other plugins or CLI commands do not necessarily emit `editor-change`. A plain vault modification is intentionally insufficient, to avoid tagging every synced note as edited today. There is no dedicated agent-write or CLI event bridge in this version.
+**Obsidian CLI edits are tracked on desktop.** Notes changed while an [Obsidian CLI](https://obsidian.md/cli) command runs (`append`, `prepend`, `property:set`, `daily:append`, `eval`, and so on) get the same update as an editor change once the command finishes, before the CLI returns. If you are typing in that note, it waits for the normal idle check. Turn this off with **Tag notes edited by the CLI**.
+
+**Other external writes are not treated as user edits.** Sync, filesystem changes, and writes from other plugins do not emit `editor-change`. A plain vault modification is intentionally insufficient, to avoid tagging every synced note as edited today.
 
 The command **Date Tags Automation: Add Today's Date Tag** adds a tag to the active note. It does not update its modified timestamp.
 
@@ -62,6 +64,7 @@ Backdated notes should set `created` to their intended creation date. Template-c
 - **Debounce delay** and **Idle time**: control when tracked edits are processed.
 - **Enable idle updates**, **Update on file switch**, and **Update on editor blur**: enable the corresponding processing checks.
 - **Preserve creation tag**: keep the creation-date tag first.
+- **Tag notes edited by the CLI**: update notes changed by Obsidian CLI commands; on by default, desktop only.
 - **Templater detection delay**: delay after template-completion events, default 300 milliseconds.
 
 An actively open note may wait until you switch away before an idle/blur check can safely update it.
@@ -81,7 +84,7 @@ This is a read-only API; it does not mark notes as edited.
 ## Troubleshooting
 
 - Check the scope and excluded folders if tags are missing.
-- For existing notes, confirm the change came through the editor, then allow the idle delay or switch notes.
+- For existing notes, confirm the change came through the editor or the Obsidian CLI, then allow the idle delay or switch notes.
 - Templater's creation trigger is device-local in current versions: enable it on each device where you use folder or regex templates.
 - Malformed frontmatter reports an error instead of being silently replaced. Repair the YAML before retrying.
 - If Linter manages modified timestamps, enable delegation and configure Linter separately.

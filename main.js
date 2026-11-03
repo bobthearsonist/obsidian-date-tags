@@ -5555,6 +5555,74 @@ var require_templater_compat = __commonJS({
   }
 });
 
+// cli-edit-tracker.js
+var require_cli_edit_tracker = __commonJS({
+  "cli-edit-tracker.js"(exports2, module2) {
+    function createCliEditTracker2({ target, onCommandSettled, isEnabled }) {
+      const collectors = /* @__PURE__ */ new Set();
+      let original = null;
+      let wrapper = null;
+      function install() {
+        if (wrapper || typeof target?.handleCli !== "function")
+          return false;
+        original = target.handleCli;
+        const inner = original;
+        wrapper = async function(args, ...rest) {
+          if (!isActive())
+            return inner.apply(this, [args, ...rest]);
+          const files = /* @__PURE__ */ new Set();
+          collectors.add(files);
+          let result;
+          try {
+            result = await inner.apply(this, [args, ...rest]);
+          } finally {
+            collectors.delete(files);
+            if (files.size > 0 && isActive()) {
+              const command = Array.isArray(args) ? args[0] : void 0;
+              try {
+                await onCommandSettled([...files], command);
+              } catch (error) {
+                console.error("DateTagsPlugin: Failed to tag CLI edits:", error);
+              }
+            }
+          }
+          return result;
+        };
+        target.handleCli = wrapper;
+        return true;
+      }
+      function isActive() {
+        return original !== null && (typeof isEnabled !== "function" || isEnabled());
+      }
+      function uninstall() {
+        if (!wrapper)
+          return;
+        if (target.handleCli === wrapper)
+          target.handleCli = original;
+        original = null;
+        wrapper = null;
+        collectors.clear();
+      }
+      function noteModified(path) {
+        if (!path)
+          return false;
+        for (const files of collectors)
+          files.add(path);
+        return collectors.size > 0;
+      }
+      return {
+        install,
+        uninstall,
+        noteModified,
+        get isCliCommandRunning() {
+          return collectors.size > 0;
+        }
+      };
+    }
+    module2.exports = { createCliEditTracker: createCliEditTracker2 };
+  }
+});
+
 // main.source.js
 var import_buffer_polyfill = __toESM(require_buffer_polyfill());
 var {
@@ -5569,6 +5637,7 @@ var {
   matchesTemplaterCreationRule,
   resolveTemplaterEventFile
 } = require_templater_compat();
+var { createCliEditTracker } = require_cli_edit_tracker();
 var DEFAULT_SETTINGS = {
   baseTag: "date",
   scopeFolders: [],
@@ -5587,6 +5656,7 @@ var DEFAULT_SETTINGS = {
   updateOnFileSwitch: true,
   updateOnEditorBlur: true,
   preserveCreationTag: true,
+  tagCliEdits: true,
   templaterDetectionDelay: 300,
   enableDebugLogging: false
 };
@@ -5948,6 +6018,14 @@ var DateTagsPlugin = class extends Plugin {
         clearedEditedFiles: clearedCount,
         filesCleared: clearedCount > 0 ? Array.from(this.editedFiles) : []
       });
+      this.cliTracker = createCliEditTracker({
+        target: window,
+        isEnabled: () => this.settings.tagCliEdits,
+        onCommandSettled: (paths, command) => this.processCliEdits(paths, command)
+      });
+      if (this.cliTracker.install()) {
+        this.register(() => this.cliTracker?.uninstall());
+      }
     });
     this.registerEvent(
       this.app.workspace.on("editor-change", (editor, view) => {
@@ -6100,6 +6178,10 @@ var DateTagsPlugin = class extends Plugin {
     }
   }
   async handleModify(file) {
+    if (this.layoutReady && !this.processor?.isModifying && this.cliTracker?.noteModified(file.path)) {
+      this.debugLog("handleModify: DEFERRED (CLI command)", { file: file.path });
+      return;
+    }
     const debugData = {
       file: file.path,
       shouldSkip: this.shouldSkipFile(file),
@@ -6173,6 +6255,20 @@ var DateTagsPlugin = class extends Plugin {
       return false;
     } finally {
       this.processingFiles.delete(file.path);
+    }
+  }
+  async processCliEdits(paths, command) {
+    if (!this.layoutReady || !this.processor)
+      return;
+    for (const path of paths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile) || !this.processor.isInScope(file))
+        continue;
+      const activeFile = this.app.workspace.getActiveFile();
+      const userTyping = activeFile?.path === file.path && Date.now() - this.lastUserEdit < this.settings.idleTimeMs;
+      const done = !userTyping && await this.processTrackedUserEdit(file, `cli:${command}`);
+      if (!done)
+        this.editedFiles.add(file.path);
     }
   }
   async handleTemplaterComplete(file) {
@@ -6336,6 +6432,15 @@ var DateTagsSettingTab = class extends PluginSettingTab {
         get: () => this.plugin.settings.updateOnEditorBlur,
         set: (value) => {
           this.plugin.settings.updateOnEditorBlur = value;
+        }
+      },
+      {
+        name: "Tag notes edited by the CLI",
+        desc: "Update notes changed by Obsidian CLI commands (append, property:set, eval, ...) as soon as the command finishes. Desktop only.",
+        type: "toggle",
+        get: () => this.plugin.settings.tagCliEdits,
+        set: (value) => {
+          this.plugin.settings.tagCliEdits = value;
         }
       },
       {
