@@ -3,7 +3,7 @@
   "name": "Date Tags Automation",
   "version": "0.2.6",
   "minAppVersion": "1.5.0",
-  "description": "Maintain creation and modification timestamps and daily date tags for notes edited in Obsidian.",
+  "description": "Maintain creation and modification timestamps and daily date tags for notes.",
   "author": "bobthearsonist",
   "authorUrl": "https://github.com/bobthearsonist",
   "fundingUrl": "https://buymeacoffee.com/bobthearsonist",

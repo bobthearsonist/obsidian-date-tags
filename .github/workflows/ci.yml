@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Verify committed main.js matches build
+        run: |
+          if ! git diff --exit-code -- main.js; then
+            echo "::error file=main.js::main.js is out of date. Run 'npm run build' and commit the updated main.js."
+            exit 1
+          fi
