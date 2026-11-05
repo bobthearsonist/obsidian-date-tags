@@ -1,6 +1,3 @@
-// Buffer polyfill for mobile compatibility
-import './buffer-polyfill.js';
-
 const {
   Plugin,
   PluginSettingTab,
@@ -8,7 +5,7 @@ const {
   TFile,
   Notice,
 } = require('obsidian');
-const matter = require('gray-matter');
+const FrontmatterManager = require('./frontmatter-manager');
 const {
   matchesTemplaterCreationRule,
   resolveTemplaterEventFile,
@@ -101,142 +98,6 @@ class DateHelper {
   }
 }
 
-// Class for handling frontmatter operations using gray-matter
-class FrontmatterManager {
-  constructor(settings, app) {
-    this.settings = settings;
-    this.app = app;
-
-    // Get Obsidian's current indentation settings
-    const indentSize = this.getObsidianIndentSize();
-
-    // YAML formatting options to ensure consistent output (js-yaml options)
-    this.yamlOptions = {
-      lineWidth: -1, // Prevent line wrapping
-      noRefs: true, // Prevent YAML references
-      flowLevel: -1, // Use block style (with dashes) instead of flow style for collections
-      sortKeys: false, // Don't sort keys to preserve original order
-      indent: indentSize, // Use Obsidian's current indentation setting
-      noArrayIndent: false, // Add indentation to array elements
-    };
-  }
-
-  getObsidianIndentSize() {
-    // Default to 2 spaces - safest for all platforms
-    // Note: app.vault.config and app.setting are not reliably available on mobile
-    // Using a fixed default prevents errors during mobile vault initialization
-    return 2;
-  }
-
-  ensureFrontmatter(content, timestamp) {
-    let parsed;
-    try {
-      parsed = matter(content);
-    } catch (error) {
-      // If parsing fails, throw error to notify user
-      throw new Error(`Failed to parse frontmatter: ${error.message}`);
-    }
-
-    // Ensure required fields exist
-    if (!parsed.data.created) {
-      parsed.data.created = timestamp;
-    }
-    if (!parsed.data.modified) {
-      parsed.data.modified = timestamp;
-    }
-    if (this.settings.addTypeIfMissing && !parsed.data.type) {
-      parsed.data.type = this.settings.typeValue;
-    }
-
-    return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
-  }
-
-  createFrontmatter(timestamp) {
-    const data = {
-      created: timestamp,
-      modified: timestamp,
-    };
-
-    if (this.settings.addTypeIfMissing) {
-      data.type = this.settings.typeValue;
-    }
-
-    return matter.stringify('', data, this.yamlOptions);
-  }
-
-  updateModified(content, timestamp) {
-    try {
-      const parsed = matter(content);
-      parsed.data.modified = timestamp;
-      return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
-    } catch (error) {
-      throw new Error(`Failed to update modified timestamp: ${error.message}`);
-    }
-  }
-
-  addTag(content, tag) {
-    try {
-      const parsed = matter(content);
-
-      // Initialize tags array if it doesn't exist
-      if (!parsed.data.tags) {
-        parsed.data.tags = [];
-      }
-
-      // Ensure tags is an array (handle various formats)
-      if (!Array.isArray(parsed.data.tags)) {
-        if (typeof parsed.data.tags === 'string') {
-          parsed.data.tags = [parsed.data.tags];
-        } else {
-          parsed.data.tags = [];
-        }
-      }
-
-      // Add tag if not already present
-      if (!parsed.data.tags.includes(tag)) {
-        parsed.data.tags.push(tag);
-      }
-
-      return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
-    } catch (error) {
-      throw new Error(`Failed to add tag "${tag}": ${error.message}`);
-    }
-  }
-
-  ensureTagAtStart(content, tag) {
-    try {
-      const parsed = matter(content);
-
-      // Initialize tags array if it doesn't exist
-      if (!parsed.data.tags) {
-        parsed.data.tags = [];
-      }
-
-      // Ensure tags is an array (handle various formats)
-      if (!Array.isArray(parsed.data.tags)) {
-        if (typeof parsed.data.tags === 'string') {
-          parsed.data.tags = [parsed.data.tags];
-        } else {
-          parsed.data.tags = [];
-        }
-      }
-
-      // Remove tag if it exists elsewhere and add at start
-      const existingIndex = parsed.data.tags.indexOf(tag);
-      if (existingIndex > -1) {
-        parsed.data.tags.splice(existingIndex, 1);
-      }
-      parsed.data.tags.unshift(tag);
-
-      return matter.stringify(parsed.content, parsed.data, this.yamlOptions);
-    } catch (error) {
-      throw new Error(
-        `Failed to ensure tag "${tag}" at start: ${error.message}`
-      );
-    }
-  }
-}
-
 // Class for handling file operations with safety checks
 class FileProcessor {
   constructor(app, settings) {
@@ -254,22 +115,10 @@ class FileProcessor {
     console.error(fullMessage);
   }
 
-  async safeUpdate(file, updateContent) {
+  async safeUpdate(file, updateFrontmatter) {
     this.isModifying = true;
     try {
-      const current = await this.app.vault.read(file);
-      let updated = updateContent(current);
-      let latest = current;
-      if (updated !== current) {
-        latest = await this.app.vault.read(file);
-        if (latest !== current) {
-          updated = updateContent(latest);
-        }
-      }
-
-      if (updated !== latest) {
-        await this.app.vault.modify(file, updated);
-      }
+      await this.frontmatterMgr.process(file, updateFrontmatter);
       return true;
     } finally {
       this.isModifying = false;
@@ -308,10 +157,9 @@ class FileProcessor {
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
 
     try {
-      await this.safeUpdate(file, (current) => {
-        let content = this.frontmatterMgr.ensureFrontmatter(current, timestamp);
-        content = this.frontmatterMgr.addTag(content, todayTag);
-        return content;
+      await this.safeUpdate(file, (frontmatter) => {
+        this.frontmatterMgr.ensureFrontmatter(frontmatter, timestamp);
+        this.frontmatterMgr.addTag(frontmatter, todayTag);
       });
       return true;
     } catch (error) {
@@ -325,43 +173,29 @@ class FileProcessor {
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
 
     try {
-      await this.safeUpdate(file, (current) => {
-        let content = current;
-
+      await this.safeUpdate(file, (frontmatter) => {
         // Update modified timestamp if not delegated
         if (
           this.settings.updateFrontmatterModified &&
           !this.settings.delegateModifiedToLinter
         ) {
-          content = this.frontmatterMgr.updateModified(content, timestamp);
+          this.frontmatterMgr.updateModified(frontmatter, timestamp);
         }
 
         // Preserve creation tag
         if (this.settings.preserveCreationTag) {
-          const parsed = matter(content);
-          const createdDate = DateHelper.parseCreatedDate(parsed.data);
+          const createdDate = DateHelper.parseCreatedDate(frontmatter);
           if (createdDate) {
             const creationTag = DateHelper.buildDateTag(
               this.settings.baseTag,
               createdDate
             );
-            content = this.frontmatterMgr.ensureTagAtStart(
-              content,
-              creationTag
-            );
+            this.frontmatterMgr.ensureTagAtStart(frontmatter, creationTag);
           }
         }
 
         // Add today's tag
-        const parsed = matter(content);
-        const currentTags = Array.isArray(parsed.data.tags)
-          ? parsed.data.tags
-          : [];
-        if (!currentTags.includes(todayTag)) {
-          content = this.frontmatterMgr.addTag(content, todayTag);
-        }
-
-        return content;
+        this.frontmatterMgr.addTag(frontmatter, todayTag);
       });
       return true;
     } catch (error) {
@@ -381,32 +215,18 @@ class FileProcessor {
     const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
 
     try {
-      await this.safeUpdate(file, (current) => {
-        let content = current;
-        const parsed = matter(content);
-        const currentTags = Array.isArray(parsed.data.tags)
-          ? parsed.data.tags
-          : [];
-        if (!currentTags.includes(todayTag)) {
-          content = this.frontmatterMgr.addTag(content, todayTag);
-        }
-
+      await this.safeUpdate(file, (frontmatter) => {
+        this.frontmatterMgr.addTag(frontmatter, todayTag);
         if (this.settings.preserveCreationTag) {
-          const updatedParsed = matter(content);
-          const createdDate = DateHelper.parseCreatedDate(updatedParsed.data);
+          const createdDate = DateHelper.parseCreatedDate(frontmatter);
           if (createdDate) {
             const creationTag = DateHelper.buildDateTag(
               this.settings.baseTag,
               createdDate
             );
-            content = this.frontmatterMgr.ensureTagAtStart(
-              content,
-              creationTag
-            );
+            this.frontmatterMgr.ensureTagAtStart(frontmatter, creationTag);
           }
         }
-
-        return content;
       });
       return true;
     } catch (error) {
@@ -832,9 +652,9 @@ class DateTagsPlugin extends Plugin {
 
     try {
       const todayTag = DateHelper.buildDateTag(this.settings.baseTag);
-      let content = await this.app.vault.read(activeFile);
-      content = this.processor.frontmatterMgr.addTag(content, todayTag);
-      await this.app.vault.modify(activeFile, content);
+      await this.processor.safeUpdate(activeFile, (frontmatter) => {
+        this.processor.frontmatterMgr.addTag(frontmatter, todayTag);
+      });
     } catch (error) {
       this.processor.showError(
         `Failed to add today's tag manually: ${error.message}`,
