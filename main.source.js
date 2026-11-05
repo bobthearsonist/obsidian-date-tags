@@ -5,6 +5,7 @@ const {
   TFile,
   Notice,
 } = require('obsidian');
+const DateHelper = require('./date-helper');
 const FrontmatterManager = require('./frontmatter-manager');
 const {
   matchesTemplaterCreationRule,
@@ -34,69 +35,6 @@ const DEFAULT_SETTINGS = {
   templaterDetectionDelay: 300,
   enableDebugLogging: false,
 };
-
-// Utility class for date formatting and tag building
-class DateHelper {
-  static formatTimestamp() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
-      2,
-      '0'
-    )}-${String(now.getDate()).padStart(2, '0')} ${String(
-      now.getHours()
-    ).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(
-      now.getSeconds()
-    ).padStart(2, '0')}`;
-  }
-
-  static buildDateTag(baseTag, date = new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${baseTag}/${year}/${month}/${day}`;
-  }
-
-  static parseDateInput(dateInput = new Date()) {
-    if (dateInput instanceof Date) {
-      if (isNaN(dateInput.getTime())) {
-        throw new Error('Invalid Date object');
-      }
-      return dateInput;
-    }
-
-    if (typeof dateInput === 'string') {
-      const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(dateInput.trim());
-      if (compact) {
-        return DateHelper.fromLocalDateParts(Number(compact[1]), Number(compact[2]), Number(compact[3]));
-      }
-
-      const dashed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput.trim());
-      if (dashed) {
-        return DateHelper.fromLocalDateParts(Number(dashed[1]), Number(dashed[2]), Number(dashed[3]));
-      }
-    }
-
-    throw new Error('Expected date input as Date, YYYY-MM-DD, or YYYYMMDD');
-  }
-
-  static fromLocalDateParts(year, month, day) {
-    const parsed = new Date(year, month - 1, day);
-    if (
-      parsed.getFullYear() !== year ||
-      parsed.getMonth() !== month - 1 ||
-      parsed.getDate() !== day
-    ) {
-      throw new Error('Invalid calendar date');
-    }
-    return parsed;
-  }
-
-  static parseCreatedDate(frontmatterData) {
-    if (!frontmatterData.created) return null;
-    const date = new Date(frontmatterData.created);
-    return isNaN(date.getTime()) ? null : date;
-  }
-}
 
 // Class for handling file operations with safety checks
 class FileProcessor {
@@ -396,8 +334,17 @@ class DateTagsPlugin extends Plugin {
 
     this.addCommand({
       id: 'add-today-date-tag',
-      name: "Add Today's Date Tag",
-      callback: () => this.addTodayTagToActiveFile(),
+      name: "Add today's date tag",
+      checkCallback: (checking) => {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!this.layoutReady || !this.processor?.isInScope(activeFile)) {
+          return false;
+        }
+        if (!checking) {
+          this.addTodayTagToActiveFile();
+        }
+        return true;
+      },
     });
   }
 
@@ -673,7 +620,6 @@ class DateTagsSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Date Tags Automation Settings' });
 
     const settings = [
       {

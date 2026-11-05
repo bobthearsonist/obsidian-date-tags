@@ -3,6 +3,79 @@ var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 
+// date-helper.js
+var require_date_helper = __commonJS({
+  "date-helper.js"(exports2, module2) {
+    var DateHelper2 = class _DateHelper {
+      static formatTimestamp() {
+        const now = /* @__PURE__ */ new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+          2,
+          "0"
+        )}-${String(now.getDate()).padStart(2, "0")} ${String(
+          now.getHours()
+        ).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(
+          now.getSeconds()
+        ).padStart(2, "0")}`;
+      }
+      static buildDateTag(baseTag, date = /* @__PURE__ */ new Date()) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${baseTag}/${year}/${month}/${day}`;
+      }
+      static parseDateInput(dateInput = /* @__PURE__ */ new Date()) {
+        if (dateInput instanceof Date) {
+          if (isNaN(dateInput.getTime())) {
+            throw new Error("Invalid Date object");
+          }
+          return dateInput;
+        }
+        if (typeof dateInput === "string") {
+          const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(dateInput.trim());
+          if (compact) {
+            return _DateHelper.fromLocalDateParts(Number(compact[1]), Number(compact[2]), Number(compact[3]));
+          }
+          const dashed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput.trim());
+          if (dashed) {
+            return _DateHelper.fromLocalDateParts(Number(dashed[1]), Number(dashed[2]), Number(dashed[3]));
+          }
+        }
+        throw new Error("Expected date input as Date, YYYY-MM-DD, or YYYYMMDD");
+      }
+      static fromLocalDateParts(year, month, day) {
+        const parsed = new Date(year, month - 1, day);
+        if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+          throw new Error("Invalid calendar date");
+        }
+        return parsed;
+      }
+      static parseCreatedDate(frontmatterData) {
+        const created = frontmatterData.created;
+        if (!created)
+          return null;
+        if (typeof created === "string") {
+          const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(created.trim());
+          if (dateOnly) {
+            try {
+              return _DateHelper.fromLocalDateParts(
+                Number(dateOnly[1]),
+                Number(dateOnly[2]),
+                Number(dateOnly[3])
+              );
+            } catch {
+              return null;
+            }
+          }
+        }
+        const date = new Date(created);
+        return isNaN(date.getTime()) ? null : date;
+      }
+    };
+    module2.exports = DateHelper2;
+  }
+});
+
 // frontmatter-manager.js
 var require_frontmatter_manager = __commonJS({
   "frontmatter-manager.js"(exports2, module2) {
@@ -211,6 +284,7 @@ var {
   TFile,
   Notice
 } = require("obsidian");
+var DateHelper = require_date_helper();
 var FrontmatterManager = require_frontmatter_manager();
 var {
   matchesTemplaterCreationRule,
@@ -238,57 +312,6 @@ var DEFAULT_SETTINGS = {
   tagCliEdits: true,
   templaterDetectionDelay: 300,
   enableDebugLogging: false
-};
-var DateHelper = class _DateHelper {
-  static formatTimestamp() {
-    const now = /* @__PURE__ */ new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
-      2,
-      "0"
-    )}-${String(now.getDate()).padStart(2, "0")} ${String(
-      now.getHours()
-    ).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(
-      now.getSeconds()
-    ).padStart(2, "0")}`;
-  }
-  static buildDateTag(baseTag, date = /* @__PURE__ */ new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${baseTag}/${year}/${month}/${day}`;
-  }
-  static parseDateInput(dateInput = /* @__PURE__ */ new Date()) {
-    if (dateInput instanceof Date) {
-      if (isNaN(dateInput.getTime())) {
-        throw new Error("Invalid Date object");
-      }
-      return dateInput;
-    }
-    if (typeof dateInput === "string") {
-      const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(dateInput.trim());
-      if (compact) {
-        return _DateHelper.fromLocalDateParts(Number(compact[1]), Number(compact[2]), Number(compact[3]));
-      }
-      const dashed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput.trim());
-      if (dashed) {
-        return _DateHelper.fromLocalDateParts(Number(dashed[1]), Number(dashed[2]), Number(dashed[3]));
-      }
-    }
-    throw new Error("Expected date input as Date, YYYY-MM-DD, or YYYYMMDD");
-  }
-  static fromLocalDateParts(year, month, day) {
-    const parsed = new Date(year, month - 1, day);
-    if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
-      throw new Error("Invalid calendar date");
-    }
-    return parsed;
-  }
-  static parseCreatedDate(frontmatterData) {
-    if (!frontmatterData.created)
-      return null;
-    const date = new Date(frontmatterData.created);
-    return isNaN(date.getTime()) ? null : date;
-  }
 };
 var FileProcessor = class {
   constructor(app, settings) {
@@ -525,8 +548,17 @@ var DateTagsPlugin = class extends Plugin {
     }
     this.addCommand({
       id: "add-today-date-tag",
-      name: "Add Today's Date Tag",
-      callback: () => this.addTodayTagToActiveFile()
+      name: "Add today's date tag",
+      checkCallback: (checking) => {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!this.layoutReady || !this.processor?.isInScope(activeFile)) {
+          return false;
+        }
+        if (!checking) {
+          this.addTodayTagToActiveFile();
+        }
+        return true;
+      }
     });
   }
   async loadSettings() {
@@ -752,7 +784,6 @@ var DateTagsSettingTab = class extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Date Tags Automation Settings" });
     const settings = [
       {
         name: "Base tag",
