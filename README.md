@@ -37,7 +37,7 @@ Existing notes are tracked through Obsidian's `editor-change` event. Processing 
 
 **Other external writes are not treated as user edits.** Sync, filesystem changes, and writes from other plugins do not emit `editor-change`. A plain vault modification is intentionally insufficient, to avoid tagging every synced note as edited today.
 
-The command **Date Tags Automation: Add Today's Date Tag** adds a tag to the active note. It does not update its modified timestamp.
+The command **Date Tags Automation: Add today's date tag** adds a tag to the active note. It does not update its modified timestamp.
 
 Tags are stored in the `tags` frontmatter property, not appended to the note body:
 
