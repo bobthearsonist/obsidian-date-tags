@@ -103,7 +103,10 @@ npm run build
 
 ## License and support
 
-Date Tags Automation is licensed under [GPL-3.0-or-later](LICENSE), with the full license in [COPYING](COPYING).
+Copyright (C) 2025 bobthearsonist
+
+Date Tags Automation is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version ([GPL-3.0-or-later](LICENSE)). It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. The full license text is in [LICENSE](LICENSE).
+
 Bundled third-party packages retain their own licenses; their complete notices are included in `main.js`.
 
 [Report a bug or request a feature](https://github.com/bobthearsonist/obsidian-date-tags/issues).

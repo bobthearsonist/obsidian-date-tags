@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Use Obsidian's native frontmatter API for metadata updates.
+- Shorten the plugin description to meet community directory guidelines.
+- Move the full GPL-3.0 text into `LICENSE` (replacing `COPYING`) so the license is detected automatically.
 
 ## [0.2.6] - 2026-11-03
 
