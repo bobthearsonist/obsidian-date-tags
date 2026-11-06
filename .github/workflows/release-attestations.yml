@@ -1,0 +1,59 @@
+name: Release attestations
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Verify release tag and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node <<'NODE'
+          const manifest = require('./manifest.json');
+          const packageJson = require('./package.json');
+          const versions = require('./versions.json');
+          const tag = process.env.GITHUB_REF_NAME;
+          if (manifest.version !== tag || packageJson.version !== tag || versions[tag] !== manifest.minAppVersion) {
+            throw new Error('Release tag, package version, manifest version, and supported app version must match.');
+          }
+          NODE
+          mkdir release-assets
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir release-assets \
+            --pattern main.js \
+            --pattern manifest.json
+          cmp --silent main.js release-assets/main.js
+          cmp --silent manifest.json release-assets/manifest.json
+
+      - name: Generate release asset attestations
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/main.js
+            release-assets/manifest.json

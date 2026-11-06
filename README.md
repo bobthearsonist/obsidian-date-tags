@@ -1,43 +1,45 @@
 # Date Tags Automation
 
-Maintain creation and modification timestamps and a daily date-tag history in your Markdown notes.
+Keep creation and modification timestamps and a daily date-tag history in your Markdown notes.
 
-## Features
+Requires Obsidian 1.5.0 or later. Templater and Linter are optional. The plugin works on desktop and mobile without network requests, accounts, or telemetry.
 
-- Add `created`, `modified`, and an optional `type` property to new notes.
-- Add a nested frontmatter tag such as `date/2026/11/03` after tracked editor changes and Obsidian CLI edits.
-- Keep the creation-date tag first and avoid duplicate tags for the same day.
-- Limit processing to selected folders and exclude templates or other folders.
-- Wait for Templater to finish creating notes, including Templater 2.x.
-- Optionally leave modified timestamps to Linter.
-- Work on desktop and mobile without network requests, accounts, or telemetry.
+## On this page
 
-Requires Obsidian 1.5.0 or later. Templater and Linter are optional.
+- [Install](#install)
+- [What it changes](#what-it-changes)
+- [Tracking behavior](#tracking-behavior)
+- [Settings](#settings)
+- [Integrations](#integrations)
+- [Troubleshooting](#troubleshooting)
+- [Development and releases](#development-and-releases)
 
-## Installation
+## Install
 
-The plugin is not yet listed in the community directory.
+Install and update **Date Tags Automation** from the [Obsidian Community Plugins directory](https://community.obsidian.md/plugins/date-tags):
+
+1. In Obsidian, open **Settings > Community plugins > Browse**.
+2. Search for **Date Tags Automation**, then select **Install** and **Enable**.
+3. Open the plugin's settings to choose which folders and metadata to track.
 
 ### Manual installation
 
-1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/bobthearsonist/obsidian-date-tags/releases/latest).
-2. Create `.obsidian/plugins/date-tags/` inside your vault and put both files there.
-3. Reload Obsidian, enable **Date Tags Automation** under **Settings > Community plugins**, and review its settings.
+1. Download `main.js` and `manifest.json` from the [latest GitHub release](https://github.com/bobthearsonist/obsidian-date-tags/releases/latest).
+2. Put both files in `.obsidian/plugins/date-tags/` inside your vault.
+3. Reload Obsidian, then enable **Date Tags Automation** in **Settings > Community plugins**.
 
-The folder must match the manifest ID, `date-tags`. The GitHub repository name does not need to match it.
-If you already installed the plugin in a differently named folder, keep a backup of its settings and avoid enabling two copies.
+The folder must match the plugin ID, `date-tags`; it does not need to match the GitHub repository name. If you already installed the plugin in a differently named folder, back up its settings and avoid enabling both copies.
 
-## How tracking works
+Back up your vault before enabling automatic frontmatter changes.
 
-New, in-scope Markdown files receive initial frontmatter and today's date tag. When a matching Templater creation rule is enabled, Date Tags waits for Templater's completion event instead.
+## What it changes
 
-Existing notes are tracked through Obsidian's `editor-change` event. Processing waits until you have been idle, with optional file-switch and editor-blur checks. The default idle threshold is five seconds and the processing debounce is three seconds.
-
-**Obsidian CLI edits are tracked on desktop.** Notes changed while an [Obsidian CLI](https://obsidian.md/cli) command runs (`append`, `prepend`, `property:set`, `daily:append`, `eval`, and so on) get the same update as an editor change once the command finishes, before the CLI returns. If you are typing in that note, it waits for the normal idle check. Turn this off with **Tag notes edited by the CLI**.
-
-**Other external writes are not treated as user edits.** Sync, filesystem changes, and writes from other plugins do not emit `editor-change`. A plain vault modification is intentionally insufficient, to avoid tagging every synced note as edited today.
-
-The command **Date Tags Automation: Add today's date tag** adds a tag to the active note. It does not update its modified timestamp.
+- Adds `created`, `modified`, and an optional `type` property to new, in-scope Markdown notes.
+- Adds a nested date tag such as `date/2026/11/03` to notes after tracked edits.
+- Keeps the creation-date tag first and avoids adding the same day's tag twice.
+- Limits tracking to selected folders and can exclude templates or other folders.
+- Waits for Templater to finish creating notes, including with Templater 2.x.
+- Lets you update `modified` yourself or delegate that timestamp to Linter.
 
 Tags are stored in the `tags` frontmatter property, not appended to the note body:
 
@@ -52,24 +54,49 @@ tags:
 ---
 ```
 
-Backdated notes should set `created` to their intended creation date. Template-completion processing preserves that date's tag and adds today's tag without overwriting template timestamps.
+For backdated notes, set `created` to the intended creation date. Template-completion processing preserves that date's tag and adds today's tag without overwriting template timestamps.
+
+## Tracking behavior
+
+| Change | What happens |
+| --- | --- |
+| A new, in-scope Markdown note is created | Adds initial frontmatter and today's date tag. If a matching Templater creation rule is enabled, waits for Templater to finish first. |
+| An existing note is edited in Obsidian | Processes the edit after the configured idle/debounce checks. Depending on settings, updates `modified` and adds today's tag. |
+| A note is edited with Obsidian CLI on desktop | Tracks supported CLI edits after the command finishes, then applies the same checks as an editor change. Turn this off with **Tag notes edited by the CLI**. |
+| A note changes through sync, the filesystem, or another plugin | Does not treat the change as a user edit, so it does not add today's tag. |
+
+The default idle threshold is five seconds and the processing debounce is three seconds. Optional checks can process an edit when you switch files or move focus away from the editor. An actively open note may wait until you switch away before a check can safely update it.
+
+The command **Date Tags Automation: Add today's date tag** adds a tag to the active note. It does not update the note's `modified` timestamp.
 
 ## Settings
 
-- **Base tag**: defaults to `date`.
-- **Scope folders**: comma-separated folders; empty means the entire vault.
-- **Exclude folders**: defaults to `Templates`, `copilot-custom-prompts`, and `copilot-conversations`.
-- **Update frontmatter modified** / **Delegate modified to Linter**: control timestamp updates after tracked edits.
-- **Add type if missing** / **Default type value**: control the initial type property.
-- **Debounce delay** and **Idle time**: control when tracked edits are processed.
-- **Enable idle updates**, **Update on file switch**, and **Update on editor blur**: enable the corresponding processing checks.
-- **Preserve creation tag**: keep the creation-date tag first.
-- **Tag notes edited by the CLI**: update notes changed by Obsidian CLI commands; on by default, desktop only.
-- **Templater detection delay**: delay after template-completion events, default 300 milliseconds.
+- **Scope folders**: comma-separated folders to track. Empty means the whole vault.
+- **Exclude folders**: folders to skip; defaults to `Templates`, `copilot-custom-prompts`, and `copilot-conversations`.
+- **Base tag**: parent tag for dates; defaults to `date`.
+- **Preserve creation tag**: keeps the creation-date tag first.
+- **Update frontmatter modified** / **Delegate modified to Linter**: choose how tracked edits update the `modified` timestamp.
+- **Add type if missing** / **Default type value**: control the initial `type` property.
+- **Enable idle updates**, **Update on file switch**, and **Update on editor blur**: choose when tracked edits are processed.
+- **Debounce delay** and **Idle time**: adjust processing timing.
+- **Tag notes edited by the CLI**: track Obsidian CLI edits; enabled by default on desktop.
+- **Templater detection delay**: time to wait after a template-completion event; defaults to 300 milliseconds.
 
-An actively open note may wait until you switch away before an idle/blur check can safely update it.
+## Integrations
 
-## Plugin API
+### Templater
+
+The plugin waits for Templater's completion event when a matching folder or regex creation rule is enabled. Templater's creation trigger is device-local in current versions, so enable it on each device where you use those templates.
+
+### Linter
+
+If Linter manages `modified` timestamps, enable **Delegate modified to Linter** and configure Linter separately.
+
+### Obsidian CLI
+
+On desktop, edits made while commands such as `append`, `prepend`, `property:set`, `daily:append`, or `eval` run are tracked when the command finishes. If you are actively typing in the same note, normal idle checks still apply.
+
+### Plugin API
 
 Other plugins can read the date-tag convention:
 
@@ -78,20 +105,18 @@ const api = app.plugins.plugins['date-tags']?.api;
 const tag = api?.buildDateTag('2026-11-03'); // date/2026/11/03 by default
 ```
 
-API version `1` exposes `buildDateTag(date)` and `getBaseTag()`. Dates may be a `Date`, `YYYY-MM-DD`, or `YYYYMMDD`.
-This is a read-only API; it does not mark notes as edited.
+API version `1` exposes `buildDateTag(date)` and `getBaseTag()`. Dates may be a `Date`, `YYYY-MM-DD`, or `YYYYMMDD`. This read-only API does not mark notes as edited.
 
 ## Troubleshooting
 
-- Check the scope and excluded folders if tags are missing.
-- For existing notes, confirm the change came through the editor or the Obsidian CLI, then allow the idle delay or switch notes.
-- Templater's creation trigger is device-local in current versions: enable it on each device where you use folder or regex templates.
-- Malformed frontmatter reports an error instead of being silently replaced. Repair the YAML before retrying.
-- If Linter manages modified timestamps, enable delegation and configure Linter separately.
+| Symptom | What to check |
+| --- | --- |
+| A note is not tagged | Confirm it is in scope and not in an excluded folder. Existing-note edits must come through Obsidian's editor or the supported desktop CLI. |
+| A template-created note has unexpected frontmatter | Enable Templater's creation trigger on this device and confirm the folder or regex rule matches. |
+| `modified` is not changing | Check **Update frontmatter modified** or configure Linter and enable **Delegate modified to Linter**. |
+| The plugin reports malformed frontmatter | Repair the YAML before retrying. The plugin reports the problem rather than silently replacing malformed data. |
 
-Back up your vault before enabling automated frontmatter changes.
-
-## Development
+## Development and releases
 
 ```sh
 npm ci
@@ -99,14 +124,14 @@ npm test
 npm run build
 ```
 
-`main.source.js` is the plugin entry point. The build bundles browser-compatible dependencies and their license notices into `main.js`. Release tags must exactly match `manifest.json`'s version, without a `v` prefix. Attach `main.js` and `manifest.json` to each release.
+`main.source.js` is the plugin entry point. The build bundles browser-compatible dependencies and their license notices into `main.js`. Release tags must exactly match `manifest.json`'s version, without a `v` prefix. Each release includes only `main.js` and `manifest.json`; GitHub Actions verifies these assets against the build and creates artifact attestations.
+
+See the [release guide](docs/releasing.md) for the full release and Obsidian directory update process.
 
 ## License and support
 
-Copyright (C) 2025 bobthearsonist
+Copyright (C) 2025 bobthearsonist.
 
-Date Tags Automation is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version ([GPL-3.0-or-later](LICENSE)). It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. The full license text is in [LICENSE](LICENSE).
-
-Bundled third-party packages retain their own licenses; their complete notices are included in `main.js`.
+Date Tags Automation is distributed under [GPL-3.0-or-later](LICENSE), without warranty. Bundled third-party packages retain their own licenses; their complete notices are included in `main.js`.
 
 [Report a bug or request a feature](https://github.com/bobthearsonist/obsidian-date-tags/issues).
