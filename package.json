@@ -1,6 +1,6 @@
 {
   "name": "date-tags-plugin",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Maintain creation and modification timestamps and daily date tags for notes.",
   "main": "main.js",
   "scripts": {
